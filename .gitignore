@@ -37,3 +37,6 @@ Thumbs.db
 test-results/
 playwright-report/
 backend/tests/fixtures/ats_snapshots/*.tmp.html
+
+# --- Working design docs (not for git history) ---
+/docs/research-search/
