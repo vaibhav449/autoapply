@@ -1,4 +1,6 @@
-from pydantic import BaseModel, HttpUrl
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, HttpUrl
 
 
 class Job(BaseModel):
@@ -8,3 +10,10 @@ class Job(BaseModel):
     company: str
     location: str | None = None
     url: HttpUrl
+
+
+class JobOut(Job):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    discovered_at: datetime

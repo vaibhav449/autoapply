@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, func
+from sqlalchemy import DateTime, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -8,6 +8,7 @@ from app.models.base import Base
 
 class Job(Base):
     __tablename__ = "jobs"
+    __table_args__ = (UniqueConstraint("source", "external_id", name="uq_jobs_source_external_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     external_id: Mapped[str]

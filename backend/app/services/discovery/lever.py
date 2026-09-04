@@ -1,0 +1,33 @@
+import httpx
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.schemas.job import Job
+from app.services.discovery import save_jobs
+
+
+async def fetch_lever_jobs(company_slug: str) -> list[Job]:
+    url = f"https://api.lever.co/v0/postings/{company_slug}?mode=json"
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url)
+        response.raise_for_status()
+        data = response.json()
+
+    return [
+        Job(
+            external_id=posting["id"],
+            source="lever",
+            title=posting["text"],
+            company=company_slug,
+            location=posting.get("categories", {}).get("location"),
+            url=posting["hostedUrl"],
+        )
+        for posting in data
+    ]
+
+
+async def discover_lever_jobs(company_slug: str, db: AsyncSession) -> list[Job]:
+    """Fetch a company's Lever postings and upsert them into the shared jobs pool."""
+    jobs = await fetch_lever_jobs(company_slug)
+    await save_jobs(jobs, db)
+    return jobs
