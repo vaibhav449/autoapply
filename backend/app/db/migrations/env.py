@@ -7,7 +7,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.core.config import settings
-from app.models import job  # noqa: F401  (import registers Job on Base.metadata)
+from app.models import job, profile  # noqa: F401  (imports register models on Base.metadata)
 from app.models.base import Base
 
 config = context.config

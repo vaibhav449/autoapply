@@ -1,9 +1,10 @@
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.models.base import Base
 from app.models.job import Job as JobModel
+from app.models.profile import Profile, ProfileProject
 
 TEST_DATABASE_URL = "postgresql+asyncpg://autoapply:autoapply@localhost:5432/autoapply_test"
 
@@ -13,7 +14,11 @@ TestSession = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_com
 
 @pytest.fixture(scope="session")
 async def create_test_schema():
+    # Base.metadata.create_all bypasses Alembic, so migrations that enable extensions
+    # (c612a86ae86a_enable_pgvector_extension) never run against this test DB — the
+    # `vector` type used by Job.embedding/Profile.embedding must be enabled here instead.
     async with test_engine.begin() as conn:
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
     yield
     async with test_engine.begin() as conn:
@@ -24,6 +29,8 @@ async def create_test_schema():
 @pytest.fixture
 async def db(create_test_schema):
     async with TestSession() as session:
+        await session.execute(delete(ProfileProject))
+        await session.execute(delete(Profile))
         await session.execute(delete(JobModel))
         await session.commit()
         yield session

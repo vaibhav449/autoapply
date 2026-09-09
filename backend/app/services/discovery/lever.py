@@ -8,7 +8,9 @@ from app.services.discovery import save_jobs
 async def fetch_lever_jobs(company_slug: str) -> list[Job]:
     url = f"https://api.lever.co/v0/postings/{company_slug}?mode=json"
 
-    async with httpx.AsyncClient() as client:
+    # httpx's default 5s timeout isn't enough now that responses include full
+    # descriptions for every posting (Palantir's is several MB of text).
+    async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(url)
         response.raise_for_status()
         data = response.json()
@@ -21,6 +23,7 @@ async def fetch_lever_jobs(company_slug: str) -> list[Job]:
             company=company_slug,
             location=posting.get("categories", {}).get("location"),
             url=posting["hostedUrl"],
+            description=posting.get("descriptionPlain"),
         )
         for posting in data
     ]

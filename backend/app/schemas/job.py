@@ -10,6 +10,7 @@ class Job(BaseModel):
     company: str
     location: str | None = None
     url: HttpUrl
+    description: str | None = None
 
 
 class JobOut(Job):

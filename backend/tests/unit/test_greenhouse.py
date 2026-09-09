@@ -10,6 +10,7 @@ FAKE_GREENHOUSE_RESPONSE = {
             "title": "Backend Engineer",
             "absolute_url": "https://boards.greenhouse.io/acme/jobs/111",
             "location": {"name": "Remote"},
+            "content": "&lt;p&gt;Requires &lt;strong&gt;3+ years&lt;/strong&gt; of experience.&lt;/p&gt;",
         },
         {
             "id": 222,
@@ -36,6 +37,10 @@ async def test_fetch_greenhouse_jobs_maps_fields_correctly() -> None:
     assert jobs[0].company == "totally-fake-co"
     assert jobs[0].location == "Remote"
     assert str(jobs[0].url) == "https://boards.greenhouse.io/acme/jobs/111"
+    # HTML-escaped entities and tags must be cleaned into plain text
+    assert jobs[0].description == "Requires 3+ years of experience."
 
     # second job has no "location" key at all — must not crash, must come out as None
     assert jobs[1].location is None
+    # second job has no "content" key at all — must not crash, must come out as None
+    assert jobs[1].description is None
