@@ -1,5 +1,7 @@
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.job import Job as JobModel
 from app.models.profile import Profile
 from app.services.llm_gateway import openai_client
 
@@ -30,6 +32,19 @@ async def extract_job_requirements(description_text: str) -> JobRequirements:
     if message.parsed is None:
         raise ValueError(f"LLM did not return valid structured output: {message.refusal}")
     return message.parsed
+
+
+async def ensure_job_requirements(job: JobModel, db: AsyncSession) -> JobRequirements:
+    """Extract once per job and cache on the row — never re-extract on a cache hit."""
+    if job.requirements is not None:
+        return JobRequirements.model_validate(job.requirements)
+
+    requirements = (
+        JobRequirements() if job.description is None else await extract_job_requirements(job.description)
+    )
+    job.requirements = requirements.model_dump()
+    await db.commit()
+    return requirements
 
 
 def meets_experience_requirement(profile: Profile, requirements: JobRequirements) -> bool:

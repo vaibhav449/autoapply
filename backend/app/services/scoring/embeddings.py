@@ -1,3 +1,4 @@
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.job import Job as JobModel
@@ -21,7 +22,14 @@ async def embed_job(job: JobModel, db: AsyncSession) -> None:
 
 
 async def embed_profile(profile: Profile, db: AsyncSession) -> None:
-    project_text = "\n\n".join(p.content_md for p in profile.projects)
-    text = f"{profile.resume_text}\n\n{project_text}" if project_text else profile.resume_text
-    profile.embedding = await embed_text(text)
+    profile.embedding = await embed_text(profile.full_resume_text)
     await db.commit()
+
+
+async def embed_unembedded_jobs(db: AsyncSession, batch_size: int = 200) -> int:
+    """Backfill embeddings for jobs discovery hasn't embedded yet. Returns how many were done."""
+    result = await db.execute(select(JobModel).where(JobModel.embedding.is_(None)).limit(batch_size))
+    jobs = result.scalars().all()
+    for job in jobs:
+        await embed_job(job, db)
+    return len(jobs)

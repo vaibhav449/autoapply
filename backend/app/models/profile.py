@@ -30,6 +30,15 @@ class Profile(Base):
         back_populates="profile", cascade="all, delete-orphan"
     )
 
+    @property
+    def full_resume_text(self) -> str:
+        """Resume plus every project write-up, concatenated — the one grounding
+        source every LLM-facing feature (embeddings, cover letters, resume
+        variants) reads from, so they all see the exact same real content.
+        """
+        project_text = "\n\n".join(f"## {p.title}\n{p.content_md}" for p in self.projects)
+        return self.resume_text if not project_text else f"{self.resume_text}\n\n{project_text}"
+
 
 class ProfileProject(Base):
     """One project's in-depth markdown write-up, belonging to a single profile."""

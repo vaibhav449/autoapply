@@ -5,6 +5,7 @@ from app.services.discovery.adzuna import discover_adzuna_jobs
 from app.services.discovery.greenhouse import discover_greenhouse_jobs
 from app.services.discovery.jooble import discover_jooble_jobs
 from app.services.discovery.lever import discover_lever_jobs
+from app.services.scoring.embeddings import embed_unembedded_jobs
 from app.workers.celery_app import celery_app
 
 GREENHOUSE_COMPANIES = ["stripe"]
@@ -86,5 +87,18 @@ async def _poll_jooble(query: str, location: str) -> None:
     try:
         async with async_session() as db:
             await discover_jooble_jobs(query, location, db)
+    finally:
+        await engine.dispose()
+
+
+@celery_app.task(name="scoring.embed_unembedded_jobs")
+def embed_unembedded_jobs_task() -> None:
+    asyncio.run(_embed_unembedded_jobs())
+
+
+async def _embed_unembedded_jobs() -> None:
+    try:
+        async with async_session() as db:
+            await embed_unembedded_jobs(db)
     finally:
         await engine.dispose()

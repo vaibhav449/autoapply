@@ -7,7 +7,12 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.core.config import settings
-from app.models import job, profile  # noqa: F401  (imports register models on Base.metadata)
+from app.models import (  # noqa: F401  (imports register models on Base.metadata)
+    cover_letter,
+    job,
+    profile,
+    resume_variant,
+)
 from app.models.base import Base
 
 config = context.config

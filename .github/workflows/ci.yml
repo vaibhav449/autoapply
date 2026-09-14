@@ -10,7 +10,9 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        # pgvector/pgvector, not plain postgres:16-alpine — matches docker-compose.yml.
+        # The vector extension binary isn't in the stock image; CREATE EXTENSION fails without it.
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: autoapply
           POSTGRES_PASSWORD: autoapply

@@ -34,5 +34,9 @@ celery_app.conf.update(
         # recurring schedule would silently and irreversibly drain that quota. Trigger
         # discover_jooble_jobs only on demand via GET /discover/jooble, or by manually
         # invoking the discovery.poll_jooble Celery task.
+        "embed-unembedded-jobs-every-15-min": {
+            "task": "scoring.embed_unembedded_jobs",
+            "schedule": 900.0,
+        },
     },
 )

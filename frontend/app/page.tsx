@@ -4,20 +4,12 @@ export default function Home() {
   return (
     <main>
       <h1>AutoApply</h1>
-      <ul>
-        <li>
-          <Link href="/applications">Applications</Link>
-        </li>
-        <li>
-          <Link href="/review">Review</Link>
-        </li>
-        <li>
-          <Link href="/pending">Pending</Link>
-        </li>
-        <li>
-          <Link href="/analytics">Analytics</Link>
-        </li>
-      </ul>
+      <p>Build a master profile once, and get ranked, personalized job matches automatically.</p>
+      <div>
+        <Link href="/profiles/new" className="btn">
+          Create your profile
+        </Link>
+      </div>
     </main>
   );
 }
