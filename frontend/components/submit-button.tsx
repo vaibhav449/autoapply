@@ -12,7 +12,7 @@ export function SubmitButton({
 }) {
   const { pending } = useFormStatus();
   return (
-    <button type="submit" disabled={pending}>
+    <button type="submit" className="btn btn-primary" disabled={pending}>
       {pending ? pendingLabel : children}
     </button>
   );

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { apiGet, type CoverLetterOut } from "@/lib/api";
+import { AlertTriangleIcon, ArrowLeftIcon } from "@/components/icons";
 
 export default async function CoverLetterPage({
   params,
@@ -18,16 +19,26 @@ export default async function CoverLetterPage({
 
   return (
     <main>
-      <div>
-        <Link href={`/profiles/${id}`}>← Back to profile</Link>
+      <Link href={`/profiles/${id}`} className="breadcrumb-link">
+        <ArrowLeftIcon width={15} height={15} />
+        Back to profile
+      </Link>
+
+      <div className="page-header-text">
+        <h1>Cover letter</h1>
       </div>
 
-      <h1>Cover letter</h1>
-
-      {error && <p className="empty-state">{error}</p>}
+      {error && (
+        <div className="alert alert-info">
+          <AlertTriangleIcon className="alert-icon" width={18} height={18} />
+          <div className="alert-body">
+            <p>{error}</p>
+          </div>
+        </div>
+      )}
       {coverLetter && (
         <section className="card">
-          <pre>{coverLetter.content}</pre>
+          <div className="document document-letter">{coverLetter.content}</div>
         </section>
       )}
     </main>
