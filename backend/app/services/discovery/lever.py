@@ -2,7 +2,7 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.job import Job
-from app.services.discovery import save_jobs
+from app.services.discovery import reconcile_board_sweep, save_jobs
 
 
 async def fetch_lever_jobs(company_slug: str) -> list[Job]:
@@ -33,4 +33,5 @@ async def discover_lever_jobs(company_slug: str, db: AsyncSession) -> list[Job]:
     """Fetch a company's Lever postings and upsert them into the shared jobs pool."""
     jobs = await fetch_lever_jobs(company_slug)
     await save_jobs(jobs, db)
+    await reconcile_board_sweep("lever", company_slug, db)
     return jobs

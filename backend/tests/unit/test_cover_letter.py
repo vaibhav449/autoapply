@@ -13,6 +13,7 @@ def _fake_completion(text: str) -> SimpleNamespace:
 async def test_generate_cover_letter_includes_resume_and_projects_in_prompt() -> None:
     profile = Profile(
         name="Ada Lovelace",
+        email="ada@example.dev",
         resume_text="Backend engineer, 5 years, Python and Postgres.",
         years_experience=5.0,
         projects=[ProfileProject(title="Payments API", content_md="Built a Stripe-like API.")],
@@ -48,6 +49,7 @@ async def test_generate_cover_letter_includes_resume_and_projects_in_prompt() ->
 async def test_generate_cover_letter_works_with_no_projects() -> None:
     profile = Profile(
         name="No Projects Yet",
+        email="noprojects@example.dev",
         resume_text="Frontend developer, 2 years.",
         years_experience=2.0,
         projects=[],

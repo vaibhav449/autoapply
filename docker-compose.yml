@@ -1,3 +1,12 @@
+# .env points at localhost for local development, where uvicorn and celery run on
+# the host. Inside a container localhost is the container itself, so anything
+# running in compose needs the service names instead.
+x-container-env: &container-env
+  DATABASE_URL: postgresql+asyncpg://autoapply:autoapply@postgres:5432/autoapply
+  REDIS_URL: redis://redis:6379/0
+  CELERY_BROKER_URL: redis://redis:6379/0
+  CELERY_RESULT_BACKEND: redis://redis:6379/1
+
 services:
   postgres:
     # pgvector's own image, not plain postgres:16-alpine — the pgvector extension
@@ -30,6 +39,7 @@ services:
   backend:
     build: ./backend
     env_file: .env
+    environment: *container-env
     depends_on:
       postgres:
         condition: service_healthy
@@ -42,6 +52,7 @@ services:
     build: ./backend
     command: ["celery", "-A", "app.workers.celery_app", "worker", "--loglevel=info"]
     env_file: .env
+    environment: *container-env
     depends_on:
       postgres:
         condition: service_healthy
@@ -52,6 +63,7 @@ services:
     build: ./backend
     command: ["celery", "-A", "app.workers.celery_app", "beat", "--loglevel=info"]
     env_file: .env
+    environment: *container-env
     depends_on:
       postgres:
         condition: service_healthy

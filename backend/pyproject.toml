@@ -21,6 +21,9 @@ dependencies = [
     "beautifulsoup4>=4.12",
     "lxml>=5.3",
     "pgvector>=0.3",
+    "email-validator>=2.2",
+    "fpdf2>=2.8",
+    "markdown>=3.7",
 ]
 
 [project.optional-dependencies]
@@ -30,6 +33,7 @@ dev = [
     "ruff>=0.7",
     "mypy>=1.13",
     "respx>=0.21",
+    "pypdf>=5.1",
 ]
 
 [tool.pytest.ini_options]

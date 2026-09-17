@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, LargeBinary, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -26,4 +26,8 @@ class ResumeVariant(Base):
     emphasis_note: Mapped[str | None]
     generated_content: Mapped[str]
     unverified_claims: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    # Rendered lazily on first request, then cached here. Tens of KB per row, so
+    # BYTEA rather than object storage - no extra infrastructure for v1, and the
+    # bytes stay transactional with the content they were rendered from.
+    pdf_bytes: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

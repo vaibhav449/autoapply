@@ -5,8 +5,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.api.v1.deps import get_db
 from app.main import app
+from app.models.application import Application
 from app.models.base import Base
 from app.models.cover_letter import CoverLetter
+from app.models.draft_answer import DraftAnswer
 from app.models.job import EMBEDDING_DIM
 from app.models.job import Job as JobModel
 from app.models.profile import Profile, ProfileProject
@@ -42,10 +44,14 @@ async def create_test_schema():
 @pytest.fixture
 async def db(create_test_schema):
     async with TestSession() as session:
-        # CoverLetter and ResumeVariant both have FKs into profiles/jobs — must go
-        # first, or deleting either of those violates the foreign key constraint
-        # (found by actually running this once CoverLetter existed, not anticipated
-        # in advance — applying the same lesson proactively for ResumeVariant now).
+        # Application, CoverLetter, and ResumeVariant all have FKs into profiles/jobs
+        # (Application into cover_letters/resume_variants too, DraftAnswer into
+        # applications) — must go first, or deleting those violates the foreign key
+        # constraint (found by actually running this once CoverLetter existed, not
+        # anticipated in advance — applying the same lesson proactively for each
+        # new dependent table since).
+        await session.execute(delete(DraftAnswer))
+        await session.execute(delete(Application))
         await session.execute(delete(CoverLetter))
         await session.execute(delete(ResumeVariant))
         await session.execute(delete(ProfileProject))
