@@ -11,6 +11,7 @@ async def fetch_adzuna_jobs(
     location: str = "",
     country: str = "in",
     results_per_page: int = 20,
+    what_exclude: str = "",
 ) -> list[Job]:
     url = f"https://api.adzuna.com/v1/api/jobs/{country}/search/1"
     params: dict[str, str | int] = {
@@ -22,6 +23,10 @@ async def fetch_adzuna_jobs(
     }
     if location:
         params["where"] = location
+    # Keeps roles above the candidate's level out of the pool entirely. Measured
+    # on a real query: senior-sounding titles fell from 12/20 to 0/20.
+    if what_exclude:
+        params["what_exclude"] = what_exclude
 
     async with httpx.AsyncClient() as client:
         response = await client.get(url, params=params)
@@ -45,8 +50,14 @@ async def fetch_adzuna_jobs(
     return jobs
 
 
-async def discover_adzuna_jobs(query: str, location: str, country: str, db: AsyncSession) -> list[Job]:
+async def discover_adzuna_jobs(
+    query: str,
+    location: str,
+    country: str,
+    db: AsyncSession,
+    what_exclude: str = "",
+) -> list[Job]:
     """Search Adzuna for a keyword/location query and upsert results into the shared jobs pool."""
-    jobs = await fetch_adzuna_jobs(query, location, country)
+    jobs = await fetch_adzuna_jobs(query, location, country, what_exclude=what_exclude)
     await save_jobs(jobs, db)
     return jobs

@@ -1,4 +1,3 @@
-from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -7,6 +6,12 @@ from app.models.profile import Profile
 from app.models.resume_variant import ResumeVariant
 from app.services.llm_gateway import openai_client
 from app.services.scoring.embeddings import embed_text
+from app.services.tailoring.grounding import VerificationResult, verify_grounding  # noqa: F401
+
+# VerificationResult/verify_grounding are re-exported, not just used internally:
+# existing tests and callers import them from this module, and patch
+# verify_grounding here by name — moving the implementation to grounding.py must
+# not move those.
 
 GENERATION_SYSTEM_PROMPT = (
     "Rewrite the candidate's resume content below to emphasize what's most relevant "
@@ -16,18 +21,6 @@ GENERATION_SYSTEM_PROMPT = (
     "type of role typically values — never attribute a skill, tool, or claim to the "
     "candidate unless it already appears in their own resume or project text."
 )
-
-VERIFICATION_SYSTEM_PROMPT = (
-    "Compare the generated resume content against the candidate's original source "
-    "material. List any specific skill, tool, technology, metric, or claim that "
-    "appears in the generated content but is NOT supported — even in different "
-    "wording — by the source material. Be conservative: only flag claims that are "
-    "genuinely unsupported. Return an empty list if everything is well-grounded."
-)
-
-
-class VerificationResult(BaseModel):
-    unverified_claims: list[str]
 
 
 async def find_representative_jds(role_label: str, db: AsyncSession, limit: int = 15) -> list[JobModel]:
@@ -73,24 +66,6 @@ async def generate_resume_variant(
     if content is None:
         raise ValueError("LLM returned no content for resume variant generation.")
     return content
-
-
-async def verify_grounding(generated_content: str, source_content: str) -> VerificationResult:
-    completion = await openai_client.chat.completions.parse(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": VERIFICATION_SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": f"SOURCE MATERIAL:\n{source_content}\n\nGENERATED CONTENT:\n{generated_content}",
-            },
-        ],
-        response_format=VerificationResult,
-    )
-    message = completion.choices[0].message
-    if message.parsed is None:
-        raise ValueError(f"LLM did not return valid structured output: {message.refusal}")
-    return message.parsed
 
 
 async def create_resume_variant(

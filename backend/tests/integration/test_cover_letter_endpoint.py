@@ -5,7 +5,13 @@ from app.models.profile import Profile
 
 
 async def test_second_request_is_cached_not_a_second_llm_call(db, client) -> None:
-    profile = Profile(name="Test Candidate", resume_text="...", years_experience=1.0, embedding=None)
+    profile = Profile(
+        name="Test Candidate",
+        email="test@example.dev",
+        resume_text="...",
+        years_experience=1.0,
+        embedding=None,
+    )
     job = JobModel(
         external_id="cover-letter-test-1",
         source="greenhouse",
@@ -35,7 +41,9 @@ async def test_second_request_is_cached_not_a_second_llm_call(db, client) -> Non
 
 
 async def test_404s_for_unknown_job(db, client) -> None:
-    profile = Profile(name="Test Candidate", resume_text="...", years_experience=1.0)
+    profile = Profile(
+        name="Test Candidate", email="test@example.dev", resume_text="...", years_experience=1.0
+    )
     db.add(profile)
     await db.commit()
     await db.refresh(profile)

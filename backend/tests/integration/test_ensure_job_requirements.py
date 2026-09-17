@@ -52,3 +52,97 @@ async def test_job_with_no_description_skips_llm_entirely(db) -> None:
 
     mock_extract.assert_not_awaited()
     assert requirements == JobRequirements()
+
+
+async def test_description_backfill_invalidates_the_cached_placeholder(db) -> None:
+    """The bug that poisoned the live pool: a job extracted before its description
+    was backfilled cached an all-null placeholder, and every later call served it.
+    """
+    job = JobModel(
+        external_id="cache-test-3",
+        source="greenhouse",
+        title="Backend Engineer",
+        company="acme",
+        location=None,
+        url="https://example.test/jobs/3",
+        description=None,
+    )
+    db.add(job)
+    await db.commit()
+
+    placeholder = await ensure_job_requirements(job, db)
+    assert placeholder.min_years_experience is None
+
+    job.description = "Minimum requirements 6+ years of experience in backend development."
+    await db.commit()
+
+    real = JobRequirements(min_years_experience=6.0)
+    with patch(
+        "app.services.scoring.requirements.extract_job_requirements",
+        new=AsyncMock(return_value=real),
+    ) as mock_extract:
+        refreshed = await ensure_job_requirements(job, db)
+
+    mock_extract.assert_awaited_once()
+    assert refreshed.min_years_experience == 6.0
+
+
+async def test_edited_description_triggers_re_extraction(db) -> None:
+    job = JobModel(
+        external_id="cache-test-4",
+        source="greenhouse",
+        title="Backend Engineer",
+        company="acme",
+        location=None,
+        url="https://example.test/jobs/4",
+        description="Requires 2+ years of experience.",
+    )
+    db.add(job)
+    await db.commit()
+
+    with patch(
+        "app.services.scoring.requirements.extract_job_requirements",
+        new=AsyncMock(return_value=JobRequirements(min_years_experience=2.0)),
+    ):
+        await ensure_job_requirements(job, db)
+
+    job.description = "Requires 9+ years of experience."
+    await db.commit()
+
+    with patch(
+        "app.services.scoring.requirements.extract_job_requirements",
+        new=AsyncMock(return_value=JobRequirements(min_years_experience=9.0)),
+    ) as mock_extract:
+        updated = await ensure_job_requirements(job, db)
+
+    mock_extract.assert_awaited_once()
+    assert updated.min_years_experience == 9.0
+
+
+async def test_legacy_row_without_a_fingerprint_is_re_extracted(db) -> None:
+    """Rows cached before fingerprinting existed carry requirements but no
+    fingerprint, so they can never match and heal on first access.
+    """
+    job = JobModel(
+        external_id="cache-test-5",
+        source="greenhouse",
+        title="Backend Engineer",
+        company="acme",
+        location=None,
+        url="https://example.test/jobs/5",
+        description="Minimum requirements 10+ years of experience.",
+        requirements={"min_years_experience": None, "remote_allowed": None},
+        requirements_fingerprint=None,
+    )
+    db.add(job)
+    await db.commit()
+
+    with patch(
+        "app.services.scoring.requirements.extract_job_requirements",
+        new=AsyncMock(return_value=JobRequirements(min_years_experience=10.0)),
+    ) as mock_extract:
+        healed = await ensure_job_requirements(job, db)
+
+    mock_extract.assert_awaited_once()
+    assert healed.min_years_experience == 10.0
+    assert job.requirements_fingerprint is not None

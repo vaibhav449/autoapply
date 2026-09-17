@@ -6,7 +6,9 @@ from tests.integration.conftest import vector
 
 
 async def test_create_then_list_resume_variant(db, client) -> None:
-    profile = Profile(name="Test Candidate", resume_text="...", years_experience=2.0)
+    profile = Profile(
+        name="Test Candidate", email="test@example.dev", resume_text="...", years_experience=2.0
+    )
     db.add(profile)
     await db.commit()
     await db.refresh(profile)
@@ -43,7 +45,9 @@ async def test_create_then_list_resume_variant(db, client) -> None:
 
 
 async def test_duplicate_role_label_is_409(db, client) -> None:
-    profile = Profile(name="Test Candidate", resume_text="...", years_experience=2.0)
+    profile = Profile(
+        name="Test Candidate", email="test@example.dev", resume_text="...", years_experience=2.0
+    )
     db.add(profile)
     await db.commit()
     await db.refresh(profile)

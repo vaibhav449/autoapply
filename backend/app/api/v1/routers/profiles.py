@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,11 +11,16 @@ from app.models.profile import Profile, ProfileProject
 from app.models.resume_variant import ResumeVariant
 from app.schemas.cover_letter import CoverLetterOut
 from app.schemas.match import JobMatch
-from app.schemas.profile import ProfileCreate, ProfileOut
+from app.schemas.profile import ProfileCreate, ProfileOut, ProfileUpdate
 from app.schemas.resume_variant import ResumeVariantCreate, ResumeVariantOut
 from app.services.scoring.embeddings import embed_profile
 from app.services.scoring.score import rank_jobs_for_profile
 from app.services.tailoring.cover_letter import ensure_cover_letter
+from app.services.tailoring.resume_pdf import (
+    UnrenderableResumeContent,
+    ensure_resume_pdf,
+    resume_pdf_filename,
+)
 from app.services.tailoring.resume_variant import create_resume_variant
 
 router = APIRouter()
@@ -35,8 +40,12 @@ async def _get_profile_or_404(profile_id: int, db: AsyncSession) -> Profile:
 async def create_profile(payload: ProfileCreate, db: AsyncSession = Depends(get_db)) -> Profile:
     profile = Profile(
         name=payload.name,
+        email=payload.email,
+        phone=payload.phone,
+        location=payload.location,
         resume_text=payload.resume_text,
         years_experience=payload.years_experience,
+        target_level=payload.target_level,
         preferences=payload.preferences,
         projects=[ProfileProject(title=p.title, content_md=p.content_md) for p in payload.projects],
     )
@@ -64,6 +73,26 @@ async def get_profile(profile_id: int, db: AsyncSession = Depends(get_db)) -> Pr
     return await _get_profile_or_404(profile_id, db)
 
 
+@router.patch("/{profile_id}", response_model=ProfileOut)
+async def update_profile(
+    profile_id: int, payload: ProfileUpdate, db: AsyncSession = Depends(get_db)
+) -> Profile:
+    profile = await _get_profile_or_404(profile_id, db)
+
+    updates = payload.model_dump(exclude_unset=True)
+    resume_changed = "resume_text" in updates and updates["resume_text"] != profile.resume_text
+    for field, value in updates.items():
+        setattr(profile, field, value)
+    await db.commit()
+
+    # full_resume_text (and therefore the embedding matches are ranked against)
+    # only depends on resume_text and projects, and projects aren't editable here.
+    if resume_changed:
+        await embed_profile(profile, db)
+
+    return profile
+
+
 @router.get("/{profile_id}/matches", response_model=list[JobMatch])
 async def get_profile_matches(profile_id: int, db: AsyncSession = Depends(get_db)) -> list[JobMatch]:
     profile = await _get_profile_or_404(profile_id, db)
@@ -71,7 +100,17 @@ async def get_profile_matches(profile_id: int, db: AsyncSession = Depends(get_db
         raise HTTPException(status_code=422, detail="Profile has no embedding yet.")
 
     ranked = await rank_jobs_for_profile(profile, db)
-    return [JobMatch(job=job, score=score) for job, score in ranked]
+    return [
+        JobMatch(
+            job=result.job,
+            score=result.score,
+            tier=result.tier.name.lower(),
+            experience=result.experience.value,
+            note=result.note,
+            stale=result.stale,
+        )
+        for result in ranked
+    ]
 
 
 @router.get("/{profile_id}/jobs/{job_id}/cover-letter", response_model=CoverLetterOut)
@@ -114,3 +153,37 @@ async def list_resume_variants(
         .order_by(ResumeVariant.created_at.desc())
     )
     return list(result.scalars().all())
+
+
+@router.get("/{profile_id}/resume-variants/{variant_id}/pdf")
+async def get_resume_variant_pdf(
+    profile_id: int, variant_id: int, db: AsyncSession = Depends(get_db)
+) -> Response:
+    profile = await _get_profile_or_404(profile_id, db)
+
+    # Scoped to this profile, so another profile's variant can't be read by id.
+    result = await db.execute(
+        select(ResumeVariant).where(
+            ResumeVariant.id == variant_id, ResumeVariant.profile_id == profile_id
+        )
+    )
+    variant = result.scalar_one_or_none()
+    if variant is None:
+        raise HTTPException(
+            status_code=404, detail=f"Resume variant {variant_id} not found for this profile"
+        )
+
+    try:
+        pdf_bytes = await ensure_resume_pdf(profile, variant, db)
+    except UnrenderableResumeContent as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Resume content cannot be rendered with the built-in fonts: {exc}",
+        ) from exc
+
+    filename = resume_pdf_filename(profile, variant)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )

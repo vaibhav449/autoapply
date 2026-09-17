@@ -8,7 +8,10 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.core.config import settings
 from app.models import (  # noqa: F401  (imports register models on Base.metadata)
+    application,
+    ats_board,
     cover_letter,
+    draft_answer,
     job,
     profile,
     resume_variant,

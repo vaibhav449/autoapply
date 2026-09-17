@@ -17,6 +17,7 @@ def _fake_completion(text: str) -> SimpleNamespace:
 async def test_generate_resume_variant_includes_profile_role_and_samples_in_prompt() -> None:
     profile = Profile(
         name="Ada Lovelace",
+        email="ada@example.dev",
         resume_text="Backend engineer, 5 years, Python and Postgres.",
         years_experience=5.0,
         projects=[ProfileProject(title="Payments API", content_md="Built a Stripe-like API.")],
