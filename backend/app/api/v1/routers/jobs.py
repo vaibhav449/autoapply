@@ -28,6 +28,15 @@ async def list_jobs(db: AsyncSession = Depends(get_db)) -> list[JobModel]:
     return list(result.scalars().all())
 
 
+@router.get("/{job_id}", response_model=JobOut)
+async def get_job(job_id: int, db: AsyncSession = Depends(get_db)) -> JobModel:
+    result = await db.execute(select(JobModel).where(JobModel.id == job_id))
+    job = result.scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    return job
+
+
 @router.get("/discover/greenhouse", response_model=list[Job])
 async def discover_jobs_greenhouse(company: str, db: AsyncSession = Depends(get_db)) -> list[Job]:
     return await discover_greenhouse_jobs(company, db)

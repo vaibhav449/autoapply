@@ -25,3 +25,6 @@ class ApplicationOut(BaseModel):
     resume_variant_id: int | None
     created_at: datetime
     submitted_at: datetime | None
+    # Read off Application.legal_next_states (a property, not a column) via
+    # from_attributes — the one real edge list, not a frontend-side copy of it.
+    legal_next_states: list[ApplicationState]

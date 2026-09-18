@@ -3,30 +3,9 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.application import Application, ApplicationState
+from app.models.application import ALLOWED_TRANSITIONS, Application, ApplicationState
 from app.models.job import Job as JobModel
 from app.models.profile import Profile
-
-ALLOWED_TRANSITIONS: dict[ApplicationState, set[ApplicationState]] = {
-    ApplicationState.INTERESTED: {ApplicationState.TAILORING, ApplicationState.REJECTED_BY_USER},
-    ApplicationState.TAILORING: {
-        ApplicationState.READY_FOR_REVIEW,
-        ApplicationState.REJECTED_BY_USER,
-    },
-    ApplicationState.READY_FOR_REVIEW: {
-        ApplicationState.APPROVED,
-        ApplicationState.PENDING_CAPTCHA,
-        ApplicationState.REJECTED_BY_USER,
-    },
-    ApplicationState.PENDING_CAPTCHA: {
-        ApplicationState.SUBMITTED,
-        ApplicationState.REJECTED_BY_USER,
-    },
-    ApplicationState.APPROVED: {ApplicationState.SUBMITTED, ApplicationState.REJECTED_BY_USER},
-    ApplicationState.SUBMITTED: {ApplicationState.RESPONSE_TRACKED},
-    ApplicationState.RESPONSE_TRACKED: set(),
-    ApplicationState.REJECTED_BY_USER: set(),
-}
 
 
 class IllegalStateTransition(ValueError):

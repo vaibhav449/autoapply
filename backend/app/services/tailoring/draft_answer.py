@@ -12,23 +12,156 @@ GENERATION_SYSTEM_PROMPT = (
     "Write a concise, first-person answer to this job application question, for the "
     "candidate below applying to the specific job described. Ground every claim "
     "strictly in the candidate's real resume and project content — never invent "
-    "experience, skills, metrics, or achievements not present in that content. "
+    "experience, skills, metrics, or achievements not present in that content.\n\n"
+    "STRUCTURED PROFILE DATA is given separately from the resume text and is "
+    "authoritative — prefer it over inferring the same fact from resume prose. In "
+    "particular: a city named as an employer's or school's address in the resume is "
+    "NOT the candidate's own location. Use the structured location field for "
+    "questions about where the candidate is, lives, or is based.\n\n"
+    "Never calculate or infer a duration. If the resume does not explicitly state how "
+    "long the candidate has done something, say the exact duration isn't specified — "
+    "do not infer a start date from surrounding context and compute years from it.\n\n"
+    "An ongoing role dated through the present (e.g. an internship marked "
+    "'... - Present') is real, current experience — never claim 'no experience' or "
+    "'not currently working' when one is listed. For questions specifically about a "
+    "formal notice period, you may note that an internship doesn't carry the same "
+    "notice obligations as full-time employment, but do not claim to be unemployed "
+    "while an internship is active.\n\n"
     "Some questions ask about things a resume cannot answer — visa or work "
-    "authorization status, salary expectations, notice period, willingness to "
-    "relocate. If the candidate's material does not address what the question asks, "
-    "write a short honest placeholder saying so instead of inventing a plausible "
-    "answer — this draft is reviewed by the candidate before anything is submitted."
+    "authorization status, salary expectations, willingness to relocate. If the "
+    "candidate's material does not address what the question asks, write a short "
+    "honest placeholder saying so instead of inventing a plausible answer — this draft "
+    "is reviewed by the candidate before anything is submitted.\n\n"
+    "This answer is typed verbatim into a plain-text field on a real application "
+    "form — it is never rendered as Markdown or HTML. Write plain text only: no "
+    "[link](url) syntax, no *emphasis*, no headings or bullet lists. If a URL is "
+    "relevant (e.g. a LinkedIn or GitHub question), write the bare URL on its own."
 )
+
+
+CHOICE_SYSTEM_PROMPT = (
+    "Pick the single best option from a fixed dropdown list on a real job "
+    "application form, for the candidate described below.\n\n"
+    "Reply with EXACTLY one option copied verbatim from the list, or the single "
+    "word NONE. Never write anything else — no explanation, no punctuation, no "
+    "option that is not on the list.\n\n"
+    "Reply NONE when the candidate's material genuinely cannot answer the "
+    "question — current offers in hand, salary expectations, visa status, "
+    "notice-period commitments, or anything asking the candidate to consent to "
+    "or acknowledge a policy. A wrong pick on a real application is worse than "
+    "leaving it for the human to choose.\n\n"
+    "But an option that explicitly covers having none or little of something "
+    "(\"No/Limited Experience\", \"None\", \"0 years\", \"No\") IS the grounded "
+    "answer when the candidate's material shows they do not have it — that is "
+    "what such an option exists for. Do not reply NONE just because the resume "
+    "never mentions the thing being asked about; if it is an experience or skill "
+    "the resume would have listed had they had it, its absence is the answer.\n\n"
+    "STRUCTURED PROFILE DATA is authoritative — prefer it over inferring the "
+    "same fact from resume prose. Never invent experience the candidate does not "
+    "have. An ongoing role dated through the present (e.g. an internship marked "
+    "'... - Present') is real, current experience — do not treat the candidate "
+    "as having none. Where the options are experience ranges, pick the range "
+    "that contains the candidate's actual years of experience."
+)
+
+
+async def choose_draft_option(
+    profile: Profile, job: JobModel, question_text: str, options: list[str]
+) -> str | None:
+    """Pick one of a dropdown's real options, or None to leave it for the human.
+
+    Structurally safer than free-text generation: the return value is checked
+    against the list the live form actually offered, so a hallucinated value
+    cannot reach the form at all — the worst case is an honest skip.
+    """
+    numbered = "\n".join(f"- {option}" for option in options)
+    completion = await openai_client.chat.completions.create(
+        model="gpt-4o-mini",
+        temperature=0,
+        messages=[
+            {"role": "system", "content": CHOICE_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    "STRUCTURED PROFILE DATA (authoritative — prefer over resume prose):\n"
+                    f"Location: {profile.location or 'not provided'}\n"
+                    f"Years of professional experience: {profile.years_experience:g}\n\n"
+                    f"CANDIDATE RESUME AND PROJECTS:\n{profile.full_resume_text}\n\n"
+                    f"JOB: {job.title} at {job.company}\n\n"
+                    f"APPLICATION QUESTION:\n{question_text}\n\n"
+                    f"OPTIONS:\n{numbered}"
+                ),
+            },
+        ],
+    )
+    content = completion.choices[0].message.content
+    if content is None:
+        return None
+
+    choice = content.strip()
+    # The hard gate: anything that is not one of this form's own options is
+    # treated as a refusal, including "NONE" and any near-miss paraphrase.
+    return choice if choice in options else None
+
+
+async def ensure_draft_option(
+    application: Application,
+    profile: Profile,
+    job: JobModel,
+    question_text: str,
+    options: list[str],
+    db: AsyncSession,
+) -> str | None:
+    """Cache-once per (application, question), same as ensure_draft_answer, so a
+    retried fill re-selects the same option instead of paying for a fresh choice.
+
+    A refusal is deliberately not cached: it costs one small call to re-ask, and
+    a row with no answer would render as an empty draft answer in the UI.
+    """
+    result = await db.execute(
+        select(DraftAnswer).where(
+            DraftAnswer.application_id == application.id,
+            DraftAnswer.question_text == question_text,
+        )
+    )
+    existing = result.scalar_one_or_none()
+    if existing is not None:
+        return existing.answer_text if existing.answer_text in options else None
+
+    choice = await choose_draft_option(profile, job, question_text, options)
+    if choice is None:
+        return None
+
+    # No grounding pass here, unlike a free-text answer: the value is one of the
+    # form's own options, so there is no invented prose for verify_grounding to
+    # check — the option list is itself the constraint.
+    db.add(
+        DraftAnswer(
+            application_id=application.id,
+            question_text=question_text,
+            answer_text=choice,
+            unverified_claims=[],
+        )
+    )
+    await db.commit()
+    return choice
 
 
 async def generate_draft_answer(profile: Profile, job: JobModel, question_text: str) -> str:
     completion = await openai_client.chat.completions.create(
         model="gpt-4o-mini",
+        # Deterministic on purpose, same reasoning as job-requirements extraction:
+        # ensure_draft_answer caches the result permanently, so sampling variance
+        # would freeze one unlucky answer onto the row forever.
+        temperature=0,
         messages=[
             {"role": "system", "content": GENERATION_SYSTEM_PROMPT},
             {
                 "role": "user",
                 "content": (
+                    "STRUCTURED PROFILE DATA (authoritative — prefer over resume prose):\n"
+                    f"Location: {profile.location or 'not provided'}\n"
+                    f"Years of professional experience: {profile.years_experience:g}\n\n"
                     f"CANDIDATE RESUME AND PROJECTS:\n{profile.full_resume_text}\n\n"
                     f"JOB: {job.title} at {job.company}\n\n"
                     f"JOB DESCRIPTION:\n{job.description or '(no description available)'}\n\n"

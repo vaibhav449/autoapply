@@ -30,6 +30,16 @@ _PUNCTUATION_FOLDING = str.maketrans(
         "•": "-",
         "·": "-",
         "…": "...",
+        "†": "",
+        "™": "",
+        "€": "EUR",
+        # Found live in a real user's resume: "↗" as a "this opens externally"
+        # icon after a link label ("Joining Letter ↗"), and "→" used inline to
+        # mean "leads to" ("rules → LLM"). Both genuine, intentional characters
+        # someone typed on purpose — not a rendering bug, just outside the
+        # built-in Latin-1 fonts, exactly like the dashes and quotes above.
+        "↗": "->",
+        "→": "->",
         " ": " ",
     }
 )
@@ -61,9 +71,14 @@ def resume_pdf_filename(profile: Profile, variant: ResumeVariant) -> str:
     return f"{stem or 'resume'}.pdf"
 
 
-def render_resume_pdf(profile: Profile, variant: ResumeVariant) -> bytes:
-    """The variant's generated text plus the profile's contact details, as a real
-    uploadable document. Pure — no DB, no network, no clock.
+def base_resume_pdf_filename(profile: Profile) -> str:
+    stem = _UNSAFE_FILENAME_CHARS.sub("_", f"{profile.name}_resume").strip("_")
+    return f"{stem or 'resume'}.pdf"
+
+
+def _render_pdf(profile: Profile, content_md: str) -> bytes:
+    """Shared skeleton (contact header + rule + body) for both a tailored resume
+    variant and the untailored fallback — pure, no DB, no network, no clock.
     """
     pdf = FPDF(format="Letter", unit="mm")
     pdf.set_auto_page_break(auto=True, margin=15)
@@ -90,11 +105,30 @@ def render_resume_pdf(profile: Profile, variant: ResumeVariant) -> bytes:
         # An ASCII bullet rather than fpdf2's default disc: resume PDFs get parsed
         # by ATS software, which handles "-" far more reliably than the WinAnsi
         # bullet byte, and it matches the literal "-" lists the LLM also emits.
-        pdf.write_html(_to_pdf_html(variant.generated_content), ul_bullet_char="-")
+        pdf.write_html(_to_pdf_html(content_md), ul_bullet_char="-")
     except FPDFUnicodeEncodingException as exc:
         raise UnrenderableResumeContent(str(exc)) from exc
 
     return bytes(pdf.output())
+
+
+def render_resume_pdf(profile: Profile, variant: ResumeVariant) -> bytes:
+    """The variant's generated text plus the profile's contact details, as a real
+    uploadable document.
+    """
+    return _render_pdf(profile, variant.generated_content)
+
+
+def render_base_resume_pdf(profile: Profile) -> bytes:
+    """The candidate's own resume text and project write-ups, untailored to any
+    job. Used by fill_application_form when an application has no linked
+    ResumeVariant yet — there is currently no workflow that ever sets
+    Application.resume_variant_id, so without this fallback the resume upload
+    field would be skipped on every single application, always. Not cached:
+    unlike a ResumeVariant (immutable once generated), a Profile can be edited,
+    and this render is pure CPU with no LLM call — cheap enough to redo per fill.
+    """
+    return _render_pdf(profile, profile.full_resume_text)
 
 
 async def ensure_resume_pdf(profile: Profile, variant: ResumeVariant, db: AsyncSession) -> bytes:

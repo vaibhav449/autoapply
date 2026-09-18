@@ -51,3 +51,19 @@ def test_rejected_by_user_reachable_from_every_non_terminal_state() -> None:
     }
     for state in non_terminal:
         validate_transition(state, ApplicationState.REJECTED_BY_USER)  # no exception = pass
+
+
+def test_legal_next_states_matches_allowed_transitions() -> None:
+    from app.models.application import ALLOWED_TRANSITIONS, Application
+
+    for state, expected in ALLOWED_TRANSITIONS.items():
+        application = Application(profile_id=1, job_id=1, state=state)
+        assert set(application.legal_next_states) == expected
+
+
+def test_legal_next_states_is_empty_for_a_terminal_state() -> None:
+    from app.models.application import Application, ApplicationState
+
+    application = Application(profile_id=1, job_id=1, state=ApplicationState.RESPONSE_TRACKED)
+
+    assert application.legal_next_states == []

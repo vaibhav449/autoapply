@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import { SubmitButton } from "@/components/submit-button";
+import { ProfileFormFields } from "@/components/profile-form-fields";
 import { PlusIcon, TrashIcon } from "@/components/icons";
-import { TARGET_LEVEL_LABELS } from "@/lib/api";
 
 type ProjectRow = { key: number; title: string; content: string };
 
@@ -22,95 +22,7 @@ export function ProfileForm({ action }: { action: (formData: FormData) => Promis
 
   return (
     <form action={action}>
-      <section className="card">
-        <div className="card-head">
-          <div className="card-head-text">
-            <h2>Basic info</h2>
-          </div>
-        </div>
-
-        <div className="form-grid">
-          <div className="field">
-            <label htmlFor="name">Name</label>
-            <input id="name" name="name" type="text" required />
-          </div>
-
-          <div className="field">
-            <label htmlFor="email">Email</label>
-            <input id="email" name="email" type="email" required />
-          </div>
-
-          <div className="field">
-            <label htmlFor="phone">Phone (optional)</label>
-            <input id="phone" name="phone" type="tel" />
-          </div>
-
-          <div className="field">
-            <label htmlFor="location">Location (optional)</label>
-            <input id="location" name="location" type="text" placeholder="e.g. Bengaluru, India" />
-          </div>
-        </div>
-        <span className="field-hint">Email and phone go on your generated resume PDF and into application forms.</span>
-      </section>
-
-      <section className="card">
-        <div className="card-head">
-          <div className="card-head-text">
-            <h2>Master resume</h2>
-          </div>
-        </div>
-        <div className="field">
-          <label htmlFor="resume_text" className="sr-only">
-            Master resume
-          </label>
-          <span className="field-hint">Paste your resume text — this is what gets matched against job descriptions.</span>
-          <textarea id="resume_text" name="resume_text" rows={10} required />
-        </div>
-      </section>
-
-      <section className="card">
-        <div className="card-head">
-          <div className="card-head-text">
-            <h2>What are you looking for?</h2>
-          </div>
-        </div>
-
-        <div className="form-grid">
-          <div className="field">
-            <label htmlFor="target_level">Target level</label>
-            <select id="target_level" name="target_level" defaultValue="junior" required>
-              {Object.entries(TARGET_LEVEL_LABELS).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="field">
-            <label htmlFor="years_experience">Years of experience</label>
-            <input
-              id="years_experience"
-              name="years_experience"
-              type="number"
-              step="0.5"
-              min="0"
-              defaultValue={0}
-              required
-            />
-          </div>
-        </div>
-        <span className="field-hint">
-          Target level decides which jobs get collected in the first place — not just how
-          they&apos;re ranked. Set it to what you want next, not what you already have.
-        </span>
-
-        <div className="field checkbox-field">
-          <label>
-            <input name="remote_only" type="checkbox" /> Remote only
-          </label>
-        </div>
-      </section>
+      <ProfileFormFields resumeHint="Paste your resume text — this is what gets matched against job descriptions." />
 
       <fieldset>
         <legend>Projects (in-depth write-ups)</legend>

@@ -3,11 +3,10 @@ from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import DateTime, ForeignKey, func
-from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.base import Base
+from app.models.base import Base, str_enum_column
 from app.models.job import EMBEDDING_DIM
 
 
@@ -43,13 +42,8 @@ class Profile(Base):
     location: Mapped[str | None]
     resume_text: Mapped[str]
     years_experience: Mapped[float]
-    target_level: Mapped[TargetLevel] = mapped_column(
-        SAEnum(
-            TargetLevel,
-            name="target_level",
-            values_callable=lambda enum_cls: [member.value for member in enum_cls],
-        ),
-        default=TargetLevel.MID,
+    target_level: Mapped[TargetLevel] = str_enum_column(
+        TargetLevel, "target_level", default=TargetLevel.MID
     )
     preferences: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

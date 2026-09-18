@@ -134,6 +134,68 @@ export type ResumeVariantCreateInput = {
   emphasis_note?: string;
 };
 
+export type ApplicationState =
+  | "interested"
+  | "tailoring"
+  | "ready_for_review"
+  | "pending_captcha"
+  | "approved"
+  | "rejected_by_user"
+  | "submitted"
+  | "response_tracked";
+
+export const APPLICATION_STATE_LABELS: Record<ApplicationState, string> = {
+  interested: "Interested",
+  tailoring: "Tailoring",
+  ready_for_review: "Ready for review",
+  pending_captcha: "Pending CAPTCHA",
+  approved: "Approved",
+  rejected_by_user: "Rejected",
+  submitted: "Submitted",
+  response_tracked: "Response tracked",
+};
+
+export type ApplicationOut = {
+  id: number;
+  profile_id: number;
+  job_id: number;
+  state: ApplicationState;
+  cover_letter_id: number | null;
+  resume_variant_id: number | null;
+  created_at: string;
+  submitted_at: string | null;
+  // From Application.legal_next_states on the backend — the one real edge
+  // list, so transition buttons never need a hand-copied state-machine map.
+  legal_next_states: ApplicationState[];
+};
+
+export type ApplicationCreateInput = {
+  profile_id: number;
+  job_id: number;
+};
+
+export type DraftAnswerCreateInput = {
+  question_text: string;
+};
+
+export type DraftAnswerOut = {
+  id: number;
+  application_id: number;
+  question_text: string;
+  answer_text: string;
+  unverified_claims: string[];
+  created_at: string;
+};
+
+export type FillFormStatus = "filled" | "captcha_required" | "form_not_found";
+
+export type FillFormResultOut = {
+  status: FillFormStatus;
+  filled_fields: Record<string, string>;
+  skipped_fields: string[];
+  screenshot_base64: string | null;
+};
+
 export type ResumeVariantOut = {
   id: number;
   role_label: string;

@@ -3,11 +3,13 @@ import io
 import pytest
 from pypdf import PdfReader
 
-from app.models.profile import Profile
+from app.models.profile import Profile, ProfileProject
 from app.models.resume_variant import ResumeVariant
 from app.services.tailoring.resume_pdf import (
     UnrenderableResumeContent,
     _to_pdf_html,
+    base_resume_pdf_filename,
+    render_base_resume_pdf,
     render_resume_pdf,
     resume_pdf_filename,
 )
@@ -69,6 +71,20 @@ def test_typographic_punctuation_is_folded_rather_than_fatal() -> None:
     assert "“" not in text
 
 
+def test_extra_typographic_symbols_are_folded_rather_than_fatal() -> None:
+    """Found live in a real user's resume: "↗" as a "this opens externally" icon
+    after a link label, and "→" used inline for "leads to" — both genuine,
+    intentional characters, just outside the built-in Latin-1 fonts, the same
+    class of gap as the em-dash/curly-quote folds above.
+    """
+    variant = make_variant("Joining Letter ↗\n\nA deterministic-first cascade (rules → LLM).\n")
+
+    text = pdf_text(render_resume_pdf(make_profile(), variant))
+
+    assert "Joining Letter ->" in text
+    assert "rules -> LLM" in text
+
+
 def test_markdown_list_bullets_render_as_plain_ascii() -> None:
     # fpdf2's default disc bullet encodes to a WinAnsi byte that ATS parsers and
     # text extractors mishandle; a resume has to survive both.
@@ -102,6 +118,33 @@ def test_raw_html_in_content_is_escaped_not_interpreted() -> None:
 
     assert "<img" not in html
     assert "&lt;img" in html
+
+
+def test_render_base_resume_pdf_uses_the_profiles_own_text_and_projects() -> None:
+    """No workflow ever sets Application.resume_variant_id today (confirmed by
+    grep — nothing writes to that column), so this untailored fallback is what
+    every single automated fill actually uploads in practice, not a rare edge
+    case for a candidate who skipped tailoring.
+    """
+    profile = make_profile(resume_text="Backend engineer with distributed systems experience.")
+    profile.projects = [ProfileProject(title="Analytical Engine", content_md="Built it from scratch.")]
+
+    pdf_bytes = render_base_resume_pdf(profile)
+
+    assert pdf_bytes.startswith(b"%PDF-")
+    text = pdf_text(pdf_bytes)
+    assert "Ada Lovelace" in text
+    assert "Backend engineer with distributed systems experience." in text
+    assert "Analytical Engine" in text
+    assert "Built it from scratch." in text
+
+
+def test_base_resume_pdf_filename_does_not_reference_a_variant() -> None:
+    profile = make_profile(name='Ada "Hacker"\r\nX-Injected: yes')
+
+    filename = base_resume_pdf_filename(profile)
+
+    assert filename == "Ada_Hacker_X-Injected_yes_resume.pdf"
 
 
 def test_filename_strips_characters_that_would_break_the_header() -> None:

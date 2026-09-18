@@ -1,13 +1,7 @@
 import Link from "next/link";
 import { ChevronRightIcon, PlusIcon, UsersIcon } from "@/components/icons";
 import { apiGet, type ProfileOut } from "@/lib/api";
-
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
+import { initials } from "@/lib/format";
 
 export default async function ProfilesPage() {
   const profiles = await apiGet<ProfileOut[]>("/api/v1/profiles/");

@@ -1,6 +1,8 @@
 import Link from "next/link";
+import { startApplication } from "@/app/applications/actions";
 import { ChevronRightIcon, ExternalLinkIcon } from "@/components/icons";
 import type { JobMatch, MatchTier } from "@/lib/api";
+import { initials } from "@/lib/format";
 
 const TIER_COPY: Record<MatchTier, { label: string; hint: string }> = {
   qualified: {
@@ -20,13 +22,6 @@ const TIER_COPY: Record<MatchTier, { label: string; hint: string }> = {
     hint: "You match none of the technologies this posting requires.",
   },
 };
-
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
 
 export function MatchList({
   matches,
@@ -82,13 +77,21 @@ export function MatchList({
                   </ul>
                 )}
 
-                <Link
-                  href={`/profiles/${profileId}/jobs/${job.id}/cover-letter`}
-                  className="match-item-footer"
-                >
-                  Generate cover letter
-                  <ChevronRightIcon width={14} height={14} />
-                </Link>
+                <div className="match-item-actions">
+                  <Link
+                    href={`/profiles/${profileId}/jobs/${job.id}/cover-letter`}
+                    className="match-item-footer"
+                  >
+                    Generate cover letter
+                    <ChevronRightIcon width={14} height={14} />
+                  </Link>
+                  <form action={startApplication.bind(null, Number(profileId), job.id)}>
+                    <button type="submit" className="match-item-footer link-button">
+                      Start application
+                      <ChevronRightIcon width={14} height={14} />
+                    </button>
+                  </form>
+                </div>
               </div>
             </div>
 

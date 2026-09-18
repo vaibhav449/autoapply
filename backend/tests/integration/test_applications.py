@@ -1,3 +1,4 @@
+import base64
 from unittest.mock import AsyncMock, patch
 
 from app.models.application import Application, ApplicationState
@@ -160,3 +161,74 @@ async def test_liveness_is_not_checked_on_unrelated_transitions(db, client) -> N
 
     assert response.status_code == 200
     checker.assert_not_awaited()
+
+
+async def test_get_application_returns_it(db, client) -> None:
+    profile, job = await _make_profile_and_job(db)
+    application = await get_or_create_application(profile, job, db)
+
+    response = await client.get(f"/api/v1/applications/{application.id}")
+
+    assert response.status_code == 200
+    assert response.json()["id"] == application.id
+    assert response.json()["profile_id"] == profile.id
+    assert response.json()["job_id"] == job.id
+
+
+async def test_get_application_404s_for_unknown_id(client) -> None:
+    response = await client.get("/api/v1/applications/999999")
+
+    assert response.status_code == 404
+
+
+async def test_get_application_exposes_legal_next_states(db, client) -> None:
+    """The frontend reads this instead of hand-copying ALLOWED_TRANSITIONS."""
+    profile, job = await _make_profile_and_job(db)
+    application = await get_or_create_application(profile, job, db)
+
+    response = await client.get(f"/api/v1/applications/{application.id}")
+
+    assert set(response.json()["legal_next_states"]) == {"tailoring", "rejected_by_user"}
+
+
+async def test_fill_form_endpoint_returns_the_result_with_a_base64_screenshot(db, client) -> None:
+    profile, job = await _make_profile_and_job(db)
+    application = await get_or_create_application(profile, job, db)
+
+    fake_result = {
+        "status": "filled",
+        "filled_fields": {"#first_name": "Test"},
+        "skipped_fields": ["#candidate-location"],
+        "screenshot": b"\x89PNG\r\n\x1a\nfake",
+    }
+    with patch(
+        "app.api.v1.routers.applications.fill_application_form",
+        new=AsyncMock(return_value=fake_result),
+    ):
+        response = await client.post(f"/api/v1/applications/{application.id}/fill-form")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "filled"
+    assert body["filled_fields"] == {"#first_name": "Test"}
+    assert body["skipped_fields"] == ["#candidate-location"]
+    assert base64.b64decode(body["screenshot_base64"]) == fake_result["screenshot"]
+
+
+async def test_fill_form_endpoint_is_422_when_no_adapter_matches_the_job_url(db, client) -> None:
+    """_make_profile_and_job's url (example.test) matches no real ATS adapter —
+    the honest response is a 4xx telling the caller why, not a crash.
+    """
+    profile, job = await _make_profile_and_job(db)
+    application = await get_or_create_application(profile, job, db)
+
+    response = await client.post(f"/api/v1/applications/{application.id}/fill-form")
+
+    assert response.status_code == 422
+    assert "No ATS adapter registered" in response.json()["detail"]
+
+
+async def test_fill_form_endpoint_404s_for_unknown_application(client) -> None:
+    response = await client.post("/api/v1/applications/999999/fill-form")
+
+    assert response.status_code == 404
