@@ -815,6 +815,13 @@ h3 {
   flex-shrink: 0;
 }
 
+.match-item-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1.1rem;
+}
+
 .match-item-footer {
   margin-top: 0.35rem;
   display: flex;
@@ -832,6 +839,23 @@ h3 {
   transform: translateX(2px);
 }
 
+/* Lets a <button> carry .match-item-footer's link-like appearance — resets the
+   browser's default button chrome instead of duplicating the color/weight/gap
+   rules above for a second, button-specific class. */
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
+
 .match-item-aside {
   flex-shrink: 0;
   display: flex;
@@ -842,7 +866,8 @@ h3 {
 
 /* --- Tier badges --- */
 
-.tier-badge {
+.tier-badge,
+.state-badge {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
@@ -854,8 +879,50 @@ h3 {
   border-radius: var(--radius-full);
   border: 1px solid var(--border);
   color: var(--text-secondary);
-  cursor: help;
   white-space: nowrap;
+}
+
+.tier-badge {
+  cursor: help;
+}
+
+/* --- Application state badges --- */
+
+.state-interested,
+.state-tailoring {
+  color: var(--info);
+  border-color: var(--info-border);
+  background: var(--info-soft);
+}
+
+.state-ready_for_review {
+  color: var(--warning);
+  border-color: var(--warning-border);
+  background: var(--warning-soft);
+}
+
+.state-pending_captcha {
+  color: var(--danger);
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+}
+
+.state-approved,
+.state-submitted {
+  color: var(--success);
+  border-color: var(--success-border);
+  background: var(--success-soft);
+}
+
+.state-rejected_by_user {
+  color: var(--text-tertiary);
+  background: transparent;
+}
+
+.state-response_tracked {
+  color: var(--info);
+  border-color: var(--info-border);
+  background: transparent;
 }
 
 .tier-qualified {
@@ -1140,6 +1207,12 @@ legend {
   margin-top: 0.25rem;
 }
 
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
 /* ==========================================================================
    Buttons
    ========================================================================== */
@@ -1243,6 +1316,52 @@ button[type="button"]:hover {
   max-width: 70ch;
 }
 
+/* ==========================================================================
+   Fill-form result — Playwright automation review
+   ========================================================================== */
+
+.fill-result {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.fill-result-screenshot {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+
+.fill-result-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1.5rem;
+}
+
+.fill-result-columns h3 {
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+}
+
+.fill-field-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.fill-field-name {
+  display: block;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+}
+
+.fill-field-value {
+  display: block;
+  word-break: break-word;
+}
+
 pre {
   white-space: pre-wrap;
   word-break: break-word;
@@ -1328,4 +1447,30 @@ pre {
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius);
   padding: 1rem 0.75rem;
+}
+
+.kanban-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.65rem 0.75rem;
+  font-size: 0.82rem;
+}
+
+.kanban-card:hover {
+  border-color: var(--border-strong);
+  text-decoration: none;
+}
+
+.kanban-card-title {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.kanban-card-meta {
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
 }
