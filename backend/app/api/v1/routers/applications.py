@@ -1,3 +1,4 @@
+import base64
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,12 +12,14 @@ from app.models.draft_answer import DraftAnswer
 from app.models.job import Job as JobModel
 from app.models.profile import Profile
 from app.schemas.application import ApplicationCreate, ApplicationOut, ApplicationTransition
+from app.schemas.automation import FillFormResultOut
 from app.schemas.draft_answer import DraftAnswerCreate, DraftAnswerOut
 from app.services.applications import (
     IllegalStateTransition,
     apply_transition,
     get_or_create_application,
 )
+from app.services.automation import NoAdapterForUrl, fill_application_form
 from app.services.discovery.liveness import Liveness, check_job_liveness
 from app.services.tailoring.draft_answer import ensure_draft_answer
 
@@ -46,6 +49,11 @@ async def list_applications(db: AsyncSession = Depends(get_db)) -> list[Applicat
         select(Application).order_by(Application.created_at.desc()).limit(50)
     )
     return list(result.scalars().all())
+
+
+@router.get("/{application_id}", response_model=ApplicationOut)
+async def get_application(application_id: int, db: AsyncSession = Depends(get_db)) -> Application:
+    return await _get_application_or_404(application_id, db)
 
 
 async def _get_application_or_404(application_id: int, db: AsyncSession) -> Application:
@@ -131,3 +139,38 @@ async def list_draft_answers(
         .order_by(DraftAnswer.created_at)
     )
     return list(result.scalars().all())
+
+
+@router.post("/{application_id}/fill-form", response_model=FillFormResultOut)
+async def fill_form(application_id: int, db: AsyncSession = Depends(get_db)) -> FillFormResultOut:
+    """Drive the real ATS form with a headless browser and return what happened —
+    never submits it, per MVP.md's non-negotiable human-approval gate. Safe to
+    call from any application state (see fill_application_form's docstring);
+    the frontend decides when to offer this action.
+    """
+    application = await _get_application_or_404(application_id, db)
+
+    # projects must be eager-loaded: draft-answer generation reads
+    # profile.full_resume_text, which touches profile.projects, and lazy-loading
+    # it outside this request's greenlet context raises MissingGreenlet.
+    profile = (
+        await db.execute(
+            select(Profile).options(selectinload(Profile.projects)).where(
+                Profile.id == application.profile_id
+            )
+        )
+    ).scalar_one()
+    job = (await db.execute(select(JobModel).where(JobModel.id == application.job_id))).scalar_one()
+
+    try:
+        result = await fill_application_form(application, profile, job, db)
+    except NoAdapterForUrl as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    screenshot = result["screenshot"]
+    return FillFormResultOut(
+        status=result["status"],
+        filled_fields=result["filled_fields"],
+        skipped_fields=result["skipped_fields"],
+        screenshot_base64=base64.b64encode(screenshot).decode("ascii") if screenshot else None,
+    )
