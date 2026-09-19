@@ -32,6 +32,13 @@ jobs:
       - name: Install backend
         working-directory: backend
         run: pip install -e ".[dev]"
+      - name: Install Playwright browsers
+        # pip installs the playwright package but never the browser binaries.
+        # The ATS adapter tests drive a real Chromium against a captured page
+        # snapshot, so without this they fail with "Executable doesn't exist".
+        # Chromium only - it is the single browser the adapter launches.
+        working-directory: backend
+        run: playwright install --with-deps chromium
       - name: Lint
         working-directory: backend
         run: ruff check .
