@@ -9,6 +9,14 @@ type ProfileFormDefaults = {
   targetLevel?: TargetLevel;
   yearsExperience?: number;
   remoteOnly?: boolean;
+  noticePeriod?: string;
+  currentCtc?: string;
+  expectedCtc?: string;
+  preferredLocations?: string;
+  workAuthorization?: string;
+  linkedinUrl?: string;
+  portfolioUrl?: string;
+  hasOfferInHand?: boolean | null;
 };
 
 /**
@@ -136,6 +144,119 @@ export function ProfileFormFields({
             Remote only
           </label>
         </div>
+      </section>
+
+      <section className="card">
+        <div className="card-head">
+          <div className="card-head-text">
+            <h2>Application answers</h2>
+            <p className="text-muted text-small">
+              Questions almost every application form asks that a resume can&apos;t answer.
+              Fill them in once and form-filling uses them everywhere. Anything left blank
+              is left blank on the form too — never guessed.
+            </p>
+          </div>
+        </div>
+
+        <div className="form-grid">
+          <div className="field">
+            <label htmlFor="notice_period">Notice period / when you can start</label>
+            <input
+              id="notice_period"
+              name="notice_period"
+              type="text"
+              placeholder="e.g. 30 days, negotiable"
+              defaultValue={defaults.noticePeriod}
+            />
+          </div>
+
+          <div className="field">
+            <label htmlFor="preferred_locations">Preferred work locations</label>
+            <input
+              id="preferred_locations"
+              name="preferred_locations"
+              type="text"
+              placeholder="e.g. Bengaluru, Pune, Remote"
+              defaultValue={defaults.preferredLocations}
+            />
+          </div>
+
+          <div className="field">
+            <label htmlFor="current_ctc">Current CTC</label>
+            <input
+              id="current_ctc"
+              name="current_ctc"
+              type="text"
+              placeholder="e.g. 6 LPA"
+              defaultValue={defaults.currentCtc}
+            />
+          </div>
+
+          <div className="field">
+            <label htmlFor="expected_ctc">Expected CTC</label>
+            <input
+              id="expected_ctc"
+              name="expected_ctc"
+              type="text"
+              placeholder="e.g. 12 LPA"
+              defaultValue={defaults.expectedCtc}
+            />
+          </div>
+
+          <div className="field">
+            <label htmlFor="work_authorization">Work authorization</label>
+            <input
+              id="work_authorization"
+              name="work_authorization"
+              type="text"
+              placeholder="e.g. Indian citizen, no sponsorship needed"
+              defaultValue={defaults.workAuthorization}
+            />
+          </div>
+
+          <div className="field">
+            <label htmlFor="has_offer_in_hand">Another offer in hand?</label>
+            <select
+              id="has_offer_in_hand"
+              name="has_offer_in_hand"
+              defaultValue={
+                defaults.hasOfferInHand === undefined || defaults.hasOfferInHand === null
+                  ? ""
+                  : String(defaults.hasOfferInHand)
+              }
+            >
+              <option value="">Prefer not to say</option>
+              <option value="false">No</option>
+              <option value="true">Yes</option>
+            </select>
+          </div>
+
+          <div className="field">
+            <label htmlFor="linkedin_url">LinkedIn</label>
+            <input
+              id="linkedin_url"
+              name="linkedin_url"
+              type="url"
+              placeholder="https://linkedin.com/in/…"
+              defaultValue={defaults.linkedinUrl}
+            />
+          </div>
+
+          <div className="field">
+            <label htmlFor="portfolio_url">Portfolio / GitHub</label>
+            <input
+              id="portfolio_url"
+              name="portfolio_url"
+              type="url"
+              placeholder="https://github.com/…"
+              defaultValue={defaults.portfolioUrl}
+            />
+          </div>
+        </div>
+        <span className="field-hint">
+          &quot;Prefer not to say&quot; on the offer question leaves it for you to answer
+          during review, which is different from answering No.
+        </span>
       </section>
     </>
   );

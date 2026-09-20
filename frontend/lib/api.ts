@@ -52,7 +52,21 @@ export const TARGET_LEVEL_LABELS: Record<TargetLevel, string> = {
   senior: "Senior (7+ years)",
 };
 
-export type ProfileCreateInput = {
+/** The answers a resume can't supply, which real application forms ask on
+ * nearly every posting. null means the candidate hasn't answered — which is
+ * left blank on the form rather than guessed. */
+export type ApplicationAnswers = {
+  notice_period: string | null;
+  current_ctc: string | null;
+  expected_ctc: string | null;
+  preferred_locations: string | null;
+  work_authorization: string | null;
+  linkedin_url: string | null;
+  portfolio_url: string | null;
+  has_offer_in_hand: boolean | null;
+};
+
+export type ProfileCreateInput = Partial<ApplicationAnswers> & {
   name: string;
   email: string;
   phone?: string;
@@ -66,16 +80,18 @@ export type ProfileCreateInput = {
 
 /** Every field optional: only the ones present in the FormData get sent, so a
  * blank input never clobbers a value the user didn't mean to touch. */
-export type ProfileUpdateInput = Partial<{
-  name: string;
-  email: string;
-  phone: string;
-  location: string;
-  resume_text: string;
-  years_experience: number;
-  target_level: TargetLevel;
-  preferences: Record<string, unknown>;
-}>;
+export type ProfileUpdateInput = Partial<
+  ApplicationAnswers & {
+    name: string;
+    email: string;
+    phone: string;
+    location: string;
+    resume_text: string;
+    years_experience: number;
+    target_level: TargetLevel;
+    preferences: Record<string, unknown>;
+  }
+>;
 
 export type ProfileProjectOut = {
   id: number;
@@ -83,7 +99,7 @@ export type ProfileProjectOut = {
   content_md: string;
 };
 
-export type ProfileOut = {
+export type ProfileOut = ApplicationAnswers & {
   id: number;
   name: string;
   email: string;

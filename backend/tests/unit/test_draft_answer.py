@@ -9,6 +9,7 @@ from app.services.tailoring.draft_answer import (
     GENERATION_SYSTEM_PROMPT,
     choose_draft_option,
     generate_draft_answer,
+    structured_profile_block,
 )
 
 EXPERIENCE_OPTIONS = ["0-6 Years", "6-8 Years", "8-10 Years", "Over 10 Years"]
@@ -148,6 +149,67 @@ async def test_choose_draft_option_returns_the_picked_option() -> None:
     for option in EXPERIENCE_OPTIONS:
         assert option in sent
     assert mock_create.await_args.kwargs["temperature"] == 0
+
+
+def test_generation_prompt_keeps_structured_fields_from_bleeding_into_each_other() -> None:
+    """Found live: asked for CCTC (current) with only an expected CTC usable, the
+    model answered "My expected CTC is 12 LPA" — a different question's answer.
+    Same shape as current-vs-preferred location. Each field answers its own
+    question or the answer says the information is missing.
+    """
+    assert "Each structured field answers only its own question" in GENERATION_SYSTEM_PROMPT
+    assert "never answer it with a different field's value" in GENERATION_SYSTEM_PROMPT
+
+
+def test_generation_prompt_still_forbids_claiming_absent_experience() -> None:
+    """Regression guard. Narrowing the "cannot answer" rule to only the
+    structured-data categories made the model claim AWS experience it does not
+    have — the general never-invent rule has to stay general.
+    """
+    assert "Never claim experience with a technology" in GENERATION_SYSTEM_PROMPT
+
+
+def test_structured_block_lists_the_candidate_supplied_answers() -> None:
+    """These are the questions a resume structurally cannot answer, which real
+    forms ask constantly — supplied once on the profile so the automation has
+    something honest to fill in rather than "my resume does not specify".
+    """
+    block = structured_profile_block(
+        make_profile(
+            location="Raichur, Karnataka, India",
+            notice_period="30 days, negotiable",
+            current_ctc="6 LPA",
+            expected_ctc="12 LPA",
+            preferred_locations="Bengaluru, Pune, Remote",
+            work_authorization="Indian citizen, no sponsorship required",
+            linkedin_url="https://linkedin.com/in/example",
+            portfolio_url="https://github.com/example",
+            has_offer_in_hand=False,
+        )
+    )
+
+    assert "30 days, negotiable" in block
+    assert "6 LPA" in block
+    assert "12 LPA" in block
+    assert "Bengaluru, Pune, Remote" in block
+    assert "no sponsorship required" in block
+    assert "https://linkedin.com/in/example" in block
+    assert "https://github.com/example" in block
+    # False is a real answer ("no"), distinct from never having been asked
+    assert "Currently holds another offer: no" in block
+
+
+def test_structured_block_omits_fields_the_candidate_left_blank() -> None:
+    """An absent field has to read as "not available" so the model refuses the
+    question. Listing all eight as "not provided" would bury the real ones.
+    """
+    block = structured_profile_block(make_profile(notice_period="Immediately available"))
+
+    assert "Immediately available" in block
+    assert "Current CTC" not in block
+    assert "Expected CTC" not in block
+    assert "Work authorization" not in block
+    assert "Currently holds another offer" not in block
 
 
 def test_choice_prompt_treats_a_no_experience_option_as_answerable() -> None:
