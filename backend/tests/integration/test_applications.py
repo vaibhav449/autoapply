@@ -204,6 +204,40 @@ async def test_get_application_exposes_legal_next_states(db, client) -> None:
     assert set(response.json()["legal_next_states"]) == {"tailoring", "rejected_by_user"}
 
 
+async def test_list_applications_can_filter_to_one_state(db, client) -> None:
+    profile, job = await _make_profile_and_job(db)
+    stuck = await get_or_create_application(profile, job, db)
+    await apply_transition(stuck, ApplicationState.REJECTED_BY_USER, db)
+
+    other_job = JobModel(
+        external_id="app-test-2",
+        source="greenhouse",
+        title="Frontend Engineer",
+        company="acme",
+        location=None,
+        url="https://example.test/2",
+        description="...",
+    )
+    db.add(other_job)
+    await db.commit()
+    await db.refresh(other_job)
+    untouched = await get_or_create_application(profile, other_job, db)
+
+    response = await client.get("/api/v1/applications/?state=rejected_by_user")
+
+    assert response.status_code == 200
+    ids = [row["id"] for row in response.json()]
+    assert stuck.id in ids
+    assert untouched.id not in ids
+    assert {row["state"] for row in response.json()} == {"rejected_by_user"}
+
+
+async def test_list_applications_rejects_a_state_that_is_not_real(client) -> None:
+    response = await client.get("/api/v1/applications/?state=definitely_not_a_state")
+
+    assert response.status_code == 422
+
+
 async def test_tailoring_attaches_the_cover_letter_and_resume_variant(db, client) -> None:
     """Both FKs were dead columns before this: a candidate could generate resume
     variants and cover letters and none of them ever reached the form, which

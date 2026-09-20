@@ -34,7 +34,12 @@ export async function transitionApplication(
     target_state: targetState,
   });
 
-  redirect(`/applications/${applicationId}`);
+  // A queue screen passes its own path so working through a list leaves you on
+  // the list, with the row you just handled gone from it.
+  const returnTo = String(formData.get("redirect_to") ?? "").trim();
+  const destination = returnTo || `/applications/${applicationId}`;
+
+  redirect(destination);
 }
 
 export async function createDraftAnswer(
