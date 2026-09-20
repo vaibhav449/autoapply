@@ -45,10 +45,18 @@ async def create_application(
 
 
 @router.get("/", response_model=list[ApplicationOut])
-async def list_applications(db: AsyncSession = Depends(get_db)) -> list[Application]:
-    result = await db.execute(
-        select(Application).order_by(Application.created_at.desc()).limit(50)
-    )
+async def list_applications(
+    state: ApplicationState | None = None, db: AsyncSession = Depends(get_db)
+) -> list[Application]:
+    """Optionally filtered to one state — the queue screens (pending, review)
+    each care about exactly one, and filtering here beats every caller pulling
+    the whole board and discarding most of it.
+    """
+    query = select(Application).order_by(Application.created_at.desc()).limit(50)
+    if state is not None:
+        query = query.where(Application.state == state)
+
+    result = await db.execute(query)
     return list(result.scalars().all())
 
 
