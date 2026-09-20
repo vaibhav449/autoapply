@@ -10,7 +10,23 @@ class ProfileProjectCreate(BaseModel):
     content_md: str
 
 
-class ProfileCreate(BaseModel):
+class CandidateApplicationFields(BaseModel):
+    """The answers a resume structurally cannot supply, asked on nearly every
+    real application form. Optional everywhere: an unanswered field stays
+    unanswered on the form too, rather than being guessed.
+    """
+
+    notice_period: str | None = None
+    current_ctc: str | None = None
+    expected_ctc: str | None = None
+    preferred_locations: str | None = None
+    work_authorization: str | None = None
+    linkedin_url: str | None = None
+    portfolio_url: str | None = None
+    has_offer_in_hand: bool | None = None
+
+
+class ProfileCreate(CandidateApplicationFields):
     name: str
     email: EmailStr
     phone: str | None = None
@@ -24,7 +40,7 @@ class ProfileCreate(BaseModel):
     projects: list[ProfileProjectCreate] = []
 
 
-class ProfileUpdate(BaseModel):
+class ProfileUpdate(CandidateApplicationFields):
     """All fields optional by design: a PATCH payload changes only what it
     includes. The route reads this via model_dump(exclude_unset=True) so an
     omitted field is left alone rather than reset to None.
@@ -52,7 +68,7 @@ class ProfileProjectOut(BaseModel):
     content_md: str
 
 
-class ProfileOut(BaseModel):
+class ProfileOut(CandidateApplicationFields):
     model_config = ConfigDict(from_attributes=True)
 
     id: int

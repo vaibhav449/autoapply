@@ -18,6 +18,10 @@ GENERATION_SYSTEM_PROMPT = (
     "particular: a city named as an employer's or school's address in the resume is "
     "NOT the candidate's own location. Use the structured location field for "
     "questions about where the candidate is, lives, or is based.\n\n"
+    "Each structured field answers only its own question. Current CTC and expected "
+    "CTC are different questions, and so are where the candidate currently lives and "
+    "where they want to work. If the field a question actually asks about is missing, "
+    "say that plainly — never answer it with a different field's value.\n\n"
     "Never calculate or infer a duration. If the resume does not explicitly state how "
     "long the candidate has done something, say the exact duration isn't specified — "
     "do not infer a start date from surrounding context and compute years from it.\n\n"
@@ -27,16 +31,54 @@ GENERATION_SYSTEM_PROMPT = (
     "formal notice period, you may note that an internship doesn't carry the same "
     "notice obligations as full-time employment, but do not claim to be unemployed "
     "while an internship is active.\n\n"
-    "Some questions ask about things a resume cannot answer — visa or work "
-    "authorization status, salary expectations, willingness to relocate. If the "
-    "candidate's material does not address what the question asks, write a short "
-    "honest placeholder saying so instead of inventing a plausible answer — this draft "
-    "is reviewed by the candidate before anything is submitted.\n\n"
+    "Some questions ask about things a resume cannot answer — notice period, "
+    "salary expectations, work authorization, another offer in hand, where the "
+    "candidate wants to work. The candidate supplies these separately in the "
+    "structured data above; when it answers the question, use it directly and "
+    "state it plainly.\n\n"
+    "Whenever the candidate's material — resume, projects and structured data "
+    "together — does not address what the question asks, write a short honest "
+    "placeholder saying so instead of inventing a plausible answer. Never claim "
+    "experience with a technology, tool, platform or domain that does not appear "
+    "in that material, and never invent a figure, date or status. Naming a "
+    "different tool the candidate has actually used is fine, but do not present "
+    "it as experience with the one being asked about. This draft is reviewed by "
+    "the candidate before anything is submitted.\n\n"
     "This answer is typed verbatim into a plain-text field on a real application "
     "form — it is never rendered as Markdown or HTML. Write plain text only: no "
     "[link](url) syntax, no *emphasis*, no headings or bullet lists. If a URL is "
     "relevant (e.g. a LinkedIn or GitHub question), write the bare URL on its own."
 )
+
+
+def structured_profile_block(profile: Profile) -> str:
+    """The candidate's reliable, non-resume facts, for both prompts to read.
+
+    Only fields the candidate actually filled in are listed: an absent field
+    should read to the model as "not available" and produce an honest refusal,
+    which is exactly what omitting it does. Listing every field as "not
+    provided" would bury the ones that are.
+    """
+    lines = [
+        f"Location: {profile.location or 'not provided'}",
+        f"Years of professional experience: {profile.years_experience:g}",
+    ]
+    optional = (
+        ("Notice period / when they can start", profile.notice_period),
+        ("Current CTC", profile.current_ctc),
+        ("Expected CTC", profile.expected_ctc),
+        ("Preferred work locations", profile.preferred_locations),
+        ("Work authorization", profile.work_authorization),
+        ("LinkedIn profile", profile.linkedin_url),
+        ("Portfolio / GitHub / personal site", profile.portfolio_url),
+    )
+    lines.extend(f"{label}: {value}" for label, value in optional if value)
+    if profile.has_offer_in_hand is not None:
+        answer = "yes" if profile.has_offer_in_hand else "no"
+        lines.append(f"Currently holds another offer: {answer}")
+
+    body = "\n".join(lines)
+    return f"STRUCTURED PROFILE DATA (authoritative — prefer over resume prose):\n{body}"
 
 
 CHOICE_SYSTEM_PROMPT = (
@@ -46,10 +88,13 @@ CHOICE_SYSTEM_PROMPT = (
     "word NONE. Never write anything else — no explanation, no punctuation, no "
     "option that is not on the list.\n\n"
     "Reply NONE when the candidate's material genuinely cannot answer the "
-    "question — current offers in hand, salary expectations, visa status, "
-    "notice-period commitments, or anything asking the candidate to consent to "
-    "or acknowledge a policy. A wrong pick on a real application is worse than "
-    "leaving it for the human to choose.\n\n"
+    "question, or when it asks the candidate to consent to or acknowledge a "
+    "policy. A wrong pick on a real application is worse than leaving it for the "
+    "human to choose.\n\n"
+    "Notice period, salary, work authorization and another offer in hand are "
+    "supplied as structured data when the candidate has given them. If the "
+    "structured data above answers the question, pick the option matching it "
+    "rather than replying NONE; if it is absent, reply NONE.\n\n"
     "But an option that explicitly covers having none or little of something "
     "(\"No/Limited Experience\", \"None\", \"0 years\", \"No\") IS the grounded "
     "answer when the candidate's material shows they do not have it — that is "
@@ -83,9 +128,7 @@ async def choose_draft_option(
             {
                 "role": "user",
                 "content": (
-                    "STRUCTURED PROFILE DATA (authoritative — prefer over resume prose):\n"
-                    f"Location: {profile.location or 'not provided'}\n"
-                    f"Years of professional experience: {profile.years_experience:g}\n\n"
+                    f"{structured_profile_block(profile)}\n\n"
                     f"CANDIDATE RESUME AND PROJECTS:\n{profile.full_resume_text}\n\n"
                     f"JOB: {job.title} at {job.company}\n\n"
                     f"APPLICATION QUESTION:\n{question_text}\n\n"
@@ -159,9 +202,7 @@ async def generate_draft_answer(profile: Profile, job: JobModel, question_text: 
             {
                 "role": "user",
                 "content": (
-                    "STRUCTURED PROFILE DATA (authoritative — prefer over resume prose):\n"
-                    f"Location: {profile.location or 'not provided'}\n"
-                    f"Years of professional experience: {profile.years_experience:g}\n\n"
+                    f"{structured_profile_block(profile)}\n\n"
                     f"CANDIDATE RESUME AND PROJECTS:\n{profile.full_resume_text}\n\n"
                     f"JOB: {job.title} at {job.company}\n\n"
                     f"JOB DESCRIPTION:\n{job.description or '(no description available)'}\n\n"

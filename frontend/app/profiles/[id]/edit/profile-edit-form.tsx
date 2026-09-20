@@ -23,6 +23,14 @@ export function ProfileEditForm({
           targetLevel: profile.target_level,
           yearsExperience: profile.years_experience,
           remoteOnly: Boolean(profile.preferences?.remote_only),
+          noticePeriod: profile.notice_period ?? undefined,
+          currentCtc: profile.current_ctc ?? undefined,
+          expectedCtc: profile.expected_ctc ?? undefined,
+          preferredLocations: profile.preferred_locations ?? undefined,
+          workAuthorization: profile.work_authorization ?? undefined,
+          linkedinUrl: profile.linkedin_url ?? undefined,
+          portfolioUrl: profile.portfolio_url ?? undefined,
+          hasOfferInHand: profile.has_offer_in_hand,
         }}
         resumeHint="Changing this re-embeds your profile — it's what your matches are ranked against."
       />

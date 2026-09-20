@@ -42,6 +42,24 @@ class Profile(Base):
     location: Mapped[str | None]
     resume_text: Mapped[str]
     years_experience: Mapped[float]
+
+    # Things a resume structurally cannot answer, which real application forms
+    # ask on nearly every posting. Without them the automation had no honest
+    # option but to skip the field or write "my resume does not specify" into
+    # it — every one of these was observed being asked on a live Greenhouse
+    # form. Free text rather than numbers or enums because forms ask in wildly
+    # different units and phrasings (LPA, annual, monthly), and the answer is
+    # rendered by an LLM into whatever shape the form wants.
+    notice_period: Mapped[str | None] = mapped_column(default=None)
+    current_ctc: Mapped[str | None] = mapped_column(default=None)
+    expected_ctc: Mapped[str | None] = mapped_column(default=None)
+    preferred_locations: Mapped[str | None] = mapped_column(default=None)
+    work_authorization: Mapped[str | None] = mapped_column(default=None)
+    linkedin_url: Mapped[str | None] = mapped_column(default=None)
+    portfolio_url: Mapped[str | None] = mapped_column(default=None)
+    # Tri-state on purpose: None means "not told us", which is different from a
+    # definite No and must not be answered as one.
+    has_offer_in_hand: Mapped[bool | None] = mapped_column(default=None)
     target_level: Mapped[TargetLevel] = str_enum_column(
         TargetLevel, "target_level", default=TargetLevel.MID
     )
