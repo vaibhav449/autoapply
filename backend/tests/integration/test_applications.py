@@ -135,9 +135,19 @@ async def test_tailoring_proceeds_when_liveness_cannot_be_checked(db, client) ->
     profile, job = await _make_profile_and_job(db)
     application = await get_or_create_application(profile, job, db)
 
-    with patch(
-        "app.api.v1.routers.applications.check_job_liveness",
-        new=AsyncMock(return_value=Liveness.UNVERIFIABLE),
+    with (
+        patch(
+            "app.api.v1.routers.applications.check_job_liveness",
+            new=AsyncMock(return_value=Liveness.UNVERIFIABLE),
+        ),
+        # This test is about the liveness guard, not about tailoring's artifacts.
+        # Without this it reaches the real cover-letter generator: a live, paid
+        # OpenAI call that passed on a machine with a key configured and failed
+        # in CI without one.
+        patch(
+            "app.api.v1.routers.applications.attach_tailoring_artifacts",
+            new=AsyncMock(),
+        ),
     ):
         response = await client.post(
             f"/api/v1/applications/{application.id}/transition",
