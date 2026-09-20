@@ -2,10 +2,13 @@ import base64
 from unittest.mock import AsyncMock, patch
 
 from app.models.application import Application, ApplicationState
+from app.models.cover_letter import CoverLetter
 from app.models.job import Job as JobModel
 from app.models.profile import Profile
+from app.models.resume_variant import ResumeVariant
 from app.services.applications import apply_transition, get_or_create_application
 from app.services.discovery.liveness import Liveness
+from app.services.tailoring.attach import attach_tailoring_artifacts
 
 
 async def _make_profile_and_job(db) -> tuple[Profile, JobModel]:
@@ -189,6 +192,86 @@ async def test_get_application_exposes_legal_next_states(db, client) -> None:
     response = await client.get(f"/api/v1/applications/{application.id}")
 
     assert set(response.json()["legal_next_states"]) == {"tailoring", "rejected_by_user"}
+
+
+async def test_tailoring_attaches_the_cover_letter_and_resume_variant(db, client) -> None:
+    """Both FKs were dead columns before this: a candidate could generate resume
+    variants and cover letters and none of them ever reached the form, which
+    filled from the untailored base resume every time.
+    """
+    profile, job = await _make_profile_and_job(db)
+    variant = ResumeVariant(
+        profile_id=profile.id, role_label="Backend Engineer", generated_content="tailored"
+    )
+    db.add(variant)
+    await db.commit()
+    await db.refresh(variant)
+
+    letter = CoverLetter(profile_id=profile.id, job_id=job.id, content="Dear team,")
+    db.add(letter)
+    await db.commit()
+    await db.refresh(letter)
+
+    application = await get_or_create_application(profile, job, db)
+
+    with (
+        patch(
+            "app.api.v1.routers.applications.check_job_liveness",
+            new=AsyncMock(return_value=Liveness.OPEN),
+        ),
+        patch(
+            "app.services.tailoring.attach.ensure_cover_letter",
+            new=AsyncMock(return_value=letter),
+        ),
+        patch(
+            "app.services.tailoring.attach.select_resume_variant",
+            new=AsyncMock(return_value=variant),
+        ),
+    ):
+        response = await client.post(
+            f"/api/v1/applications/{application.id}/transition",
+            json={"target_state": "tailoring"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["cover_letter_id"] == letter.id
+    assert response.json()["resume_variant_id"] == variant.id
+
+    await db.refresh(application)
+    assert application.state == ApplicationState.TAILORING
+
+
+async def test_tailoring_does_not_overwrite_a_variant_already_chosen(db) -> None:
+    """Once a human has picked a variant for this application, re-entering
+    tailoring must not silently swap it for whatever the matcher prefers.
+    """
+    profile, job = await _make_profile_and_job(db)
+    chosen = ResumeVariant(profile_id=profile.id, role_label="Chosen", generated_content="a")
+    other = ResumeVariant(profile_id=profile.id, role_label="Other", generated_content="b")
+    db.add_all([chosen, other])
+    await db.commit()
+    await db.refresh(chosen)
+
+    letter = CoverLetter(profile_id=profile.id, job_id=job.id, content="Dear team,")
+    db.add(letter)
+    await db.commit()
+
+    application = await get_or_create_application(profile, job, db)
+    application.resume_variant_id = chosen.id
+    await db.commit()
+
+    matcher = AsyncMock(return_value=other)
+    with (
+        patch(
+            "app.services.tailoring.attach.ensure_cover_letter",
+            new=AsyncMock(return_value=letter),
+        ),
+        patch("app.services.tailoring.attach.select_resume_variant", new=matcher),
+    ):
+        await attach_tailoring_artifacts(application, profile, job, db)
+
+    assert application.resume_variant_id == chosen.id
+    matcher.assert_not_awaited()  # not even consulted
 
 
 async def test_fill_form_endpoint_returns_the_result_with_a_base64_screenshot(db, client) -> None:

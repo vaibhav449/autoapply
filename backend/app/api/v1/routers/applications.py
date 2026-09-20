@@ -21,6 +21,7 @@ from app.services.applications import (
 )
 from app.services.automation import NoAdapterForUrl, fill_application_form
 from app.services.discovery.liveness import Liveness, check_job_liveness
+from app.services.tailoring.attach import attach_tailoring_artifacts
 from app.services.tailoring.draft_answer import ensure_draft_answer
 
 router = APIRouter()
@@ -65,6 +66,27 @@ async def _get_application_or_404(application_id: int, db: AsyncSession) -> Appl
     return application
 
 
+async def _load_profile_and_job(
+    application: Application, db: AsyncSession
+) -> tuple[Profile, JobModel]:
+    """The real objects behind an application's FKs, for the services that need
+    more than the ids.
+
+    projects must be eager-loaded: profile.full_resume_text reads
+    profile.projects, and lazy-loading that outside the greenlet context
+    selectinload avoids raises MissingGreenlet rather than quietly working.
+    """
+    profile = (
+        await db.execute(
+            select(Profile)
+            .options(selectinload(Profile.projects))
+            .where(Profile.id == application.profile_id)
+        )
+    ).scalar_one()
+    job = (await db.execute(select(JobModel).where(JobModel.id == application.job_id))).scalar_one()
+    return profile, job
+
+
 async def _guard_job_still_open(application: Application, db: AsyncSession) -> None:
     """Tailoring is the first expensive step — two LLM generations plus a grounding
     verification pass — so it is the right place to confirm the posting still
@@ -96,6 +118,12 @@ async def transition_application(
 
     if payload.target_state is ApplicationState.TAILORING:
         await _guard_job_still_open(application, db)
+        # Before the state change, not after: an application that says it is
+        # tailoring should already have the artifacts it will submit. If
+        # generation fails the state is untouched and the move can just be
+        # retried, rather than stranding it in tailoring with nothing attached.
+        profile, job = await _load_profile_and_job(application, db)
+        await attach_tailoring_artifacts(application, profile, job, db)
 
     try:
         await apply_transition(application, payload.target_state, db)
@@ -110,20 +138,7 @@ async def create_draft_answer(
     application_id: int, payload: DraftAnswerCreate, db: AsyncSession = Depends(get_db)
 ) -> DraftAnswer:
     application = await _get_application_or_404(application_id, db)
-
-    # Re-fetched rather than trusted from the Application row: FK integrity means
-    # these exist, but ensure_draft_answer needs the real objects, not just ids.
-    # projects must be eager-loaded: full_resume_text reads profile.projects, and
-    # lazy-loading it here (outside the greenlet context selectinload avoids)
-    # raises MissingGreenlet rather than silently working.
-    profile = (
-        await db.execute(
-            select(Profile).options(selectinload(Profile.projects)).where(
-                Profile.id == application.profile_id
-            )
-        )
-    ).scalar_one()
-    job = (await db.execute(select(JobModel).where(JobModel.id == application.job_id))).scalar_one()
+    profile, job = await _load_profile_and_job(application, db)
 
     return await ensure_draft_answer(application, profile, job, payload.question_text, db)
 
@@ -149,18 +164,7 @@ async def fill_form(application_id: int, db: AsyncSession = Depends(get_db)) -> 
     the frontend decides when to offer this action.
     """
     application = await _get_application_or_404(application_id, db)
-
-    # projects must be eager-loaded: draft-answer generation reads
-    # profile.full_resume_text, which touches profile.projects, and lazy-loading
-    # it outside this request's greenlet context raises MissingGreenlet.
-    profile = (
-        await db.execute(
-            select(Profile).options(selectinload(Profile.projects)).where(
-                Profile.id == application.profile_id
-            )
-        )
-    ).scalar_one()
-    job = (await db.execute(select(JobModel).where(JobModel.id == application.job_id))).scalar_one()
+    profile, job = await _load_profile_and_job(application, db)
 
     try:
         result = await fill_application_form(application, profile, job, db)
