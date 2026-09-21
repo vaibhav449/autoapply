@@ -1246,15 +1246,19 @@ button {
   font-size: 0.82rem;
 }
 
+/* A bare submit button is the primary action of its form, so it gets the accent
+   without needing a class. The :not() keeps that convenience from outranking an
+   explicit .btn-secondary — an element+attribute selector beats a class, so
+   without it every secondary submit button silently rendered as primary. */
 .btn-primary,
-button[type="submit"] {
+button[type="submit"]:not(.btn-secondary) {
   background: var(--accent);
   color: var(--accent-foreground);
   align-self: flex-start;
 }
 
 .btn-primary:hover,
-button[type="submit"]:hover {
+button[type="submit"]:not(.btn-secondary):hover {
   background: var(--accent-hover);
 }
 
