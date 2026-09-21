@@ -1,14 +1,21 @@
 import Link from "next/link";
-import { transitionApplication, createDraftAnswer } from "@/app/applications/actions";
+import {
+  transitionApplication,
+  createDraftAnswer,
+  recordOutcome,
+} from "@/app/applications/actions";
 import { DraftAnswerCard } from "@/components/draft-answer-card";
 import { FillFormPanel } from "@/components/fill-form-panel";
 import { SubmitButton } from "@/components/submit-button";
 import { ArrowLeftIcon, ExternalLinkIcon } from "@/components/icons";
 import {
   APPLICATION_STATE_LABELS,
+  OUTCOME_KIND_LABELS,
   apiGet,
   type ApplicationOut,
+  type ApplicationOutcomeOut,
   type DraftAnswerOut,
+  type OutcomeKind,
   type JobOut,
   type ProfileOut,
 } from "@/lib/api";
@@ -22,14 +29,19 @@ export default async function ApplicationDetailPage({
   const applicationId = Number(id);
 
   const application = await apiGet<ApplicationOut>(`/api/v1/applications/${id}`);
-  const [profile, job, draftAnswers] = await Promise.all([
+  const [profile, job, draftAnswers, outcomes] = await Promise.all([
     apiGet<ProfileOut>(`/api/v1/profiles/${application.profile_id}`),
     apiGet<JobOut>(`/api/v1/jobs/${application.job_id}`),
     apiGet<DraftAnswerOut[]>(`/api/v1/applications/${id}/draft-answers`),
+    apiGet<ApplicationOutcomeOut[]>(`/api/v1/applications/${id}/outcomes`),
   ]);
 
   const transitionWithId = transitionApplication.bind(null, applicationId);
   const createAnswerWithId = createDraftAnswer.bind(null, applicationId);
+  const recordOutcomeWithId = recordOutcome.bind(null, applicationId);
+  // Only offered once something has actually gone out — "rejected" on an
+  // application nobody sent is not a fact worth recording.
+  const canRecordOutcome = Boolean(application.submitted_at);
 
   return (
     <main>
@@ -95,6 +107,60 @@ export default async function ApplicationDetailPage({
       </section>
 
       <FillFormPanel applicationId={application.id} />
+
+      {(canRecordOutcome || outcomes.length > 0) && (
+        <section className="card">
+          <div className="card-head">
+            <div className="card-head-text">
+              <h2>What came back</h2>
+              <p className="text-muted text-small">
+                Every response is kept, not just the most recent — an application that
+                reached an interview still counts as one after a later rejection.
+              </p>
+            </div>
+          </div>
+
+          {outcomes.length === 0 ? (
+            <p className="text-muted text-small">Nothing recorded yet.</p>
+          ) : (
+            <ul className="fill-field-list">
+              {outcomes.map((outcome) => (
+                <li key={outcome.id}>
+                  <span className="fill-field-name">
+                    {OUTCOME_KIND_LABELS[outcome.kind]} ·{" "}
+                    {new Date(outcome.occurred_at).toLocaleDateString()}
+                  </span>
+                  {outcome.note && <span className="fill-field-value">{outcome.note}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {canRecordOutcome && (
+            <form action={recordOutcomeWithId}>
+              <div className="form-grid">
+                <div className="field">
+                  <label htmlFor="kind">Record a response</label>
+                  <select id="kind" name="kind" required>
+                    {(Object.keys(OUTCOME_KIND_LABELS) as OutcomeKind[]).map((kind) => (
+                      <option key={kind} value={kind}>
+                        {OUTCOME_KIND_LABELS[kind]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label htmlFor="note">Note (optional)</label>
+                  <input id="note" name="note" type="text" placeholder="e.g. 30 min with the hiring manager" />
+                </div>
+              </div>
+              <div className="form-footer">
+                <SubmitButton pendingLabel="Recording…">Record</SubmitButton>
+              </div>
+            </form>
+          )}
+        </section>
+      )}
 
       <section className="section">
         <div className="section-head">

@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.application import ALLOWED_TRANSITIONS, Application, ApplicationState
+from app.models.application_outcome import ApplicationOutcome, OutcomeKind
 from app.models.job import Job as JobModel
 from app.models.profile import Profile
 
@@ -28,6 +29,38 @@ async def apply_transition(
     if target == ApplicationState.SUBMITTED:
         application.submitted_at = datetime.now(UTC)
     await db.commit()
+
+
+async def record_outcome(
+    application: Application,
+    kind: OutcomeKind,
+    note: str | None,
+    occurred_at: datetime | None,
+    db: AsyncSession,
+) -> ApplicationOutcome:
+    """Log what came back, and move the application along if that is legal.
+
+    The log is the record; the state change is a convenience so the board stops
+    showing something as merely submitted once it is demonstrably not. An
+    application already past submitted keeps its state — hearing back twice is
+    normal (an interview, then an offer) and only the first one has anywhere to
+    move to.
+    """
+    outcome = ApplicationOutcome(
+        application_id=application.id,
+        kind=kind,
+        note=note,
+        occurred_at=occurred_at or datetime.now(UTC),
+    )
+    db.add(outcome)
+    await db.commit()
+
+    try:
+        await apply_transition(application, ApplicationState.RESPONSE_TRACKED, db)
+    except IllegalStateTransition:
+        pass
+
+    return outcome
 
 
 async def get_or_create_application(

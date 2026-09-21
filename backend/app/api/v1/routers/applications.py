@@ -8,16 +8,19 @@ from sqlalchemy.orm import selectinload
 
 from app.api.v1.deps import get_db
 from app.models.application import Application, ApplicationState
+from app.models.application_outcome import ApplicationOutcome
 from app.models.draft_answer import DraftAnswer
 from app.models.job import Job as JobModel
 from app.models.profile import Profile
 from app.schemas.application import ApplicationCreate, ApplicationOut, ApplicationTransition
+from app.schemas.application_outcome import ApplicationOutcomeCreate, ApplicationOutcomeOut
 from app.schemas.automation import FillFormResultOut
 from app.schemas.draft_answer import DraftAnswerCreate, DraftAnswerOut, DraftAnswerUpdate
 from app.services.applications import (
     IllegalStateTransition,
     apply_transition,
     get_or_create_application,
+    record_outcome,
 )
 from app.services.automation import NoAdapterForUrl, fill_application_form
 from app.services.discovery.liveness import Liveness, check_job_liveness
@@ -206,6 +209,31 @@ async def update_draft_answer(
     answer.unverified_claims = verification.unverified_claims
     await db.commit()
     return answer
+
+
+@router.post("/{application_id}/outcomes", response_model=ApplicationOutcomeOut)
+async def create_application_outcome(
+    application_id: int,
+    payload: ApplicationOutcomeCreate,
+    db: AsyncSession = Depends(get_db),
+) -> ApplicationOutcome:
+    application = await _get_application_or_404(application_id, db)
+    return await record_outcome(
+        application, payload.kind, payload.note, payload.occurred_at, db
+    )
+
+
+@router.get("/{application_id}/outcomes", response_model=list[ApplicationOutcomeOut])
+async def list_application_outcomes(
+    application_id: int, db: AsyncSession = Depends(get_db)
+) -> list[ApplicationOutcome]:
+    await _get_application_or_404(application_id, db)
+    result = await db.execute(
+        select(ApplicationOutcome)
+        .where(ApplicationOutcome.application_id == application_id)
+        .order_by(ApplicationOutcome.occurred_at)
+    )
+    return list(result.scalars().all())
 
 
 @router.post("/{application_id}/fill-form", response_model=FillFormResultOut)
