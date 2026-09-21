@@ -203,6 +203,27 @@ export type DraftAnswerOut = {
   created_at: string;
 };
 
+/** What came back after an application went out. Recorded as a log, not a
+ * state: an application that interviewed and was then rejected has to count in
+ * both for the funnel, which a single current-state value can't express. */
+export type OutcomeKind = "no_response" | "rejected" | "interview" | "offer";
+
+export const OUTCOME_KIND_LABELS: Record<OutcomeKind, string> = {
+  interview: "Interview",
+  offer: "Offer",
+  rejected: "Rejected",
+  no_response: "No response",
+};
+
+export type ApplicationOutcomeOut = {
+  id: number;
+  application_id: number;
+  kind: OutcomeKind;
+  note: string | null;
+  occurred_at: string;
+  created_at: string;
+};
+
 export type FillFormStatus = "filled" | "captcha_required" | "form_not_found";
 
 export type FillFormResultOut = {

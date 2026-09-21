@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.api.v1.deps import get_db
 from app.main import app
 from app.models.application import Application
+from app.models.application_outcome import ApplicationOutcome
 from app.models.base import Base
 from app.models.cover_letter import CoverLetter
 from app.models.draft_answer import DraftAnswer
@@ -50,6 +51,7 @@ async def db(create_test_schema):
         # constraint (found by actually running this once CoverLetter existed, not
         # anticipated in advance — applying the same lesson proactively for each
         # new dependent table since).
+        await session.execute(delete(ApplicationOutcome))
         await session.execute(delete(DraftAnswer))
         await session.execute(delete(Application))
         await session.execute(delete(CoverLetter))

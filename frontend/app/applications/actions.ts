@@ -9,6 +9,7 @@ import {
   type ApplicationState,
   type DraftAnswerCreateInput,
   type FillFormResultOut,
+  type OutcomeKind,
 } from "@/lib/api";
 
 export async function startApplication(profileId: number, jobId: number): Promise<void> {
@@ -59,6 +60,26 @@ export async function createDraftAnswer(
 
   // Redirect to the same page rather than revalidatePath: forces the same fresh
   // server-side fetch every other mutation in this app relies on, no new pattern.
+  redirect(`/applications/${applicationId}`);
+}
+
+export async function recordOutcome(
+  applicationId: number,
+  formData: FormData,
+): Promise<void> {
+  const kind = String(formData.get("kind") ?? "") as OutcomeKind;
+
+  if (!kind) {
+    throw new Error("An outcome is required.");
+  }
+
+  const note = String(formData.get("note") ?? "").trim();
+
+  await apiPost(`/api/v1/applications/${applicationId}/outcomes`, {
+    kind,
+    ...(note ? { note } : {}),
+  });
+
   redirect(`/applications/${applicationId}`);
 }
 
