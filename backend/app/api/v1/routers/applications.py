@@ -13,7 +13,7 @@ from app.models.job import Job as JobModel
 from app.models.profile import Profile
 from app.schemas.application import ApplicationCreate, ApplicationOut, ApplicationTransition
 from app.schemas.automation import FillFormResultOut
-from app.schemas.draft_answer import DraftAnswerCreate, DraftAnswerOut
+from app.schemas.draft_answer import DraftAnswerCreate, DraftAnswerOut, DraftAnswerUpdate
 from app.services.applications import (
     IllegalStateTransition,
     apply_transition,
@@ -23,6 +23,7 @@ from app.services.automation import NoAdapterForUrl, fill_application_form
 from app.services.discovery.liveness import Liveness, check_job_liveness
 from app.services.tailoring.attach import attach_tailoring_artifacts
 from app.services.tailoring.draft_answer import ensure_draft_answer
+from app.services.tailoring.grounding import verify_grounding
 
 router = APIRouter()
 
@@ -162,6 +163,49 @@ async def list_draft_answers(
         .order_by(DraftAnswer.created_at)
     )
     return list(result.scalars().all())
+
+
+@router.patch("/{application_id}/draft-answers/{answer_id}", response_model=DraftAnswerOut)
+async def update_draft_answer(
+    application_id: int,
+    answer_id: int,
+    payload: DraftAnswerUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> DraftAnswer:
+    """Replace an answer's text with the candidate's own wording.
+
+    The grounding check is re-run rather than cleared. Clearing would be wrong:
+    an answer with three flagged claims where the human fixed one would come
+    back clean while the other two are still sitting in the text. Re-running
+    describes what is actually there now — and the flag has always meant "not
+    found in the source", which is just as true of a human's sentence as a
+    model's.
+    """
+    application = await _get_application_or_404(application_id, db)
+
+    # Scoped to this application, so an answer belonging to another one can't be
+    # rewritten by guessing its id.
+    answer = (
+        await db.execute(
+            select(DraftAnswer).where(
+                DraftAnswer.id == answer_id,
+                DraftAnswer.application_id == application.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if answer is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Draft answer {answer_id} not found for application {application_id}",
+        )
+
+    profile, _ = await _load_profile_and_job(application, db)
+    verification = await verify_grounding(payload.answer_text, profile.full_resume_text)
+
+    answer.answer_text = payload.answer_text
+    answer.unverified_claims = verification.unverified_claims
+    await db.commit()
+    return answer
 
 
 @router.post("/{application_id}/fill-form", response_model=FillFormResultOut)

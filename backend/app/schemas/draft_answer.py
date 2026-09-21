@@ -7,6 +7,10 @@ class DraftAnswerCreate(BaseModel):
     question_text: str
 
 
+class DraftAnswerUpdate(BaseModel):
+    answer_text: str
+
+
 class DraftAnswerOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import {
+  apiPatch,
   apiPost,
   type ApplicationCreateInput,
   type ApplicationOut,
@@ -59,6 +60,27 @@ export async function createDraftAnswer(
   // Redirect to the same page rather than revalidatePath: forces the same fresh
   // server-side fetch every other mutation in this app relies on, no new pattern.
   redirect(`/applications/${applicationId}`);
+}
+
+export async function updateDraftAnswer(
+  applicationId: number,
+  answerId: number,
+  formData: FormData,
+): Promise<void> {
+  const answerText = String(formData.get("answer_text") ?? "").trim();
+
+  if (!answerText) {
+    throw new Error("An answer cannot be empty.");
+  }
+
+  await apiPatch(`/api/v1/applications/${applicationId}/draft-answers/${answerId}`, {
+    answer_text: answerText,
+  });
+
+  // Back to the queue the edit came from, so a reviewer working through
+  // answers stays where they are and sees the re-checked flags.
+  const returnTo = String(formData.get("redirect_to") ?? "").trim();
+  redirect(returnTo || `/applications/${applicationId}`);
 }
 
 // Called directly from a client component, not through a <form action> — the

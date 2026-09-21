@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { transitionApplication, createDraftAnswer } from "@/app/applications/actions";
+import { DraftAnswerCard } from "@/components/draft-answer-card";
 import { FillFormPanel } from "@/components/fill-form-panel";
 import { SubmitButton } from "@/components/submit-button";
-import { AlertTriangleIcon, ArrowLeftIcon, ExternalLinkIcon } from "@/components/icons";
+import { ArrowLeftIcon, ExternalLinkIcon } from "@/components/icons";
 import {
   APPLICATION_STATE_LABELS,
   apiGet,
@@ -127,27 +128,7 @@ export default async function ApplicationDetailPage({
           <p className="empty-state">No draft answers yet.</p>
         ) : (
           draftAnswers.map((answer) => (
-            <section key={answer.id} className="card">
-              <div className="card-head">
-                <div className="card-head-text">
-                  <h3>{answer.question_text}</h3>
-                </div>
-              </div>
-              <div className="document">{answer.answer_text}</div>
-              {answer.unverified_claims.length > 0 && (
-                <div className="alert alert-warning">
-                  <AlertTriangleIcon className="alert-icon" width={18} height={18} />
-                  <div className="alert-body">
-                    <strong>Unverified — not found in the source resume/projects</strong>
-                    <ul>
-                      {answer.unverified_claims.map((claim) => (
-                        <li key={claim}>{claim}</li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-              )}
-            </section>
+            <DraftAnswerCard key={answer.id} applicationId={applicationId} answer={answer} />
           ))
         )}
       </section>
