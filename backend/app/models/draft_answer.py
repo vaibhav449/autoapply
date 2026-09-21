@@ -27,4 +27,11 @@ class DraftAnswer(Base):
     question_text: Mapped[str]
     answer_text: Mapped[str]
     unverified_claims: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    # What this answer was generated from — the prompt version plus the resume
+    # and description it was grounded in — so improving the prompt or editing
+    # the resume regenerates it instead of serving the old text forever.
+    #
+    # NULL means nobody generated it: a person wrote this, and it is not ours to
+    # overwrite no matter how far the prompt has moved on.
+    fingerprint: Mapped[str | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
