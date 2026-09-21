@@ -207,6 +207,10 @@ async def update_draft_answer(
 
     answer.answer_text = payload.answer_text
     answer.unverified_claims = verification.unverified_claims
+    # Clearing the fingerprint hands the answer over: it was not generated from
+    # anything any more, so no later prompt change or resume edit regenerates
+    # over what the candidate wrote here.
+    answer.fingerprint = None
     await db.commit()
     return answer
 

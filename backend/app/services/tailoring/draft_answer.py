@@ -1,3 +1,5 @@
+import hashlib
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -49,6 +51,34 @@ GENERATION_SYSTEM_PROMPT = (
     "[link](url) syntax, no *emphasis*, no headings or bullet lists. If a URL is "
     "relevant (e.g. a LinkedIn or GitHub question), write the bare URL on its own."
 )
+
+
+# Bump whenever a generation prompt changes. It feeds the cache fingerprint, so
+# raising it regenerates every stored answer — without this, improving a prompt
+# left every already-cached answer exactly as it was, which is how a fixed
+# hallucination kept being served from a row written before the fix.
+GENERATION_VERSION = "1"
+
+
+def answer_fingerprint(profile: Profile, job: JobModel) -> str:
+    """Identifies everything a generated answer depends on besides its question.
+
+    The question is already the cache key, so what is left is the prompt logic
+    and the material it was grounded in — edit the resume and the old answer is
+    describing a person who no longer exists on paper.
+    """
+    payload = "\0".join(
+        [GENERATION_VERSION, profile.full_resume_text, job.description or ""]
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+
+
+def _is_reusable(existing: DraftAnswer, fingerprint: str) -> bool:
+    """A NULL fingerprint means a person wrote this answer, so it is theirs and
+    stays put however far the prompt has moved on. Anything else is ours, and is
+    only reusable while it still matches what it would be generated from now.
+    """
+    return existing.fingerprint is None or existing.fingerprint == fingerprint
 
 
 def structured_profile_block(profile: Profile) -> str:
@@ -160,7 +190,11 @@ async def ensure_draft_option(
 
     A refusal is deliberately not cached: it costs one small call to re-ask, and
     a row with no answer would render as an empty draft answer in the UI.
+
+    A stored choice is also dropped once it is no longer one of the options this
+    form offers, which covers a form being edited under a cached answer.
     """
+    fingerprint = answer_fingerprint(profile, job)
     result = await db.execute(
         select(DraftAnswer).where(
             DraftAnswer.application_id == application.id,
@@ -168,12 +202,19 @@ async def ensure_draft_option(
         )
     )
     existing = result.scalar_one_or_none()
-    if existing is not None:
+    if existing is not None and _is_reusable(existing, fingerprint):
         return existing.answer_text if existing.answer_text in options else None
 
     choice = await choose_draft_option(profile, job, question_text, options)
     if choice is None:
         return None
+
+    if existing is not None:
+        existing.answer_text = choice
+        existing.unverified_claims = []
+        existing.fingerprint = fingerprint
+        await db.commit()
+        return choice
 
     # No grounding pass here, unlike a free-text answer: the value is one of the
     # form's own options, so there is no invented prose for verify_grounding to
@@ -184,6 +225,7 @@ async def ensure_draft_option(
             question_text=question_text,
             answer_text=choice,
             unverified_claims=[],
+            fingerprint=fingerprint,
         )
     )
     await db.commit()
@@ -224,9 +266,16 @@ async def ensure_draft_answer(
     question_text: str,
     db: AsyncSession,
 ) -> DraftAnswer:
-    """Cache-once per (application, question) pair — never regenerate on a hit,
-    the same idempotency discipline as ensure_cover_letter.
+    """Generate once per (application, question), and again whenever what it was
+    generated from has moved on.
+
+    Caching on the question alone is what let a fixed hallucination keep being
+    served: the prompt was corrected, but every answer written before the fix
+    stayed exactly as it was, because a plain cache hit never looks at whether
+    the thing that produced it still exists. An answer a person edited is the
+    one exception — that is theirs, and no prompt change reclaims it.
     """
+    fingerprint = answer_fingerprint(profile, job)
     result = await db.execute(
         select(DraftAnswer).where(
             DraftAnswer.application_id == application.id,
@@ -234,7 +283,7 @@ async def ensure_draft_answer(
         )
     )
     existing = result.scalar_one_or_none()
-    if existing is not None:
+    if existing is not None and _is_reusable(existing, fingerprint):
         return existing
 
     content = await generate_draft_answer(profile, job, question_text)
@@ -243,11 +292,22 @@ async def ensure_draft_answer(
     # an unflagged hallucination, so this artifact gets the verification pass.
     verification = await verify_grounding(content, profile.full_resume_text)
 
+    if existing is not None:
+        # Updated in place rather than replaced: (application, question) is
+        # unique, and anything already pointing at this row should follow the
+        # answer rather than the id.
+        existing.answer_text = content
+        existing.unverified_claims = verification.unverified_claims
+        existing.fingerprint = fingerprint
+        await db.commit()
+        return existing
+
     draft_answer = DraftAnswer(
         application_id=application.id,
         question_text=question_text,
         answer_text=content,
         unverified_claims=verification.unverified_claims,
+        fingerprint=fingerprint,
     )
     db.add(draft_answer)
     await db.commit()
