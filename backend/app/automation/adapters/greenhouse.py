@@ -1,15 +1,31 @@
 import re
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal, TypedDict
+from urllib.parse import parse_qs, urlparse
 
-from playwright.async_api import Locator, Page, async_playwright
+from playwright.async_api import Error as PlaywrightError
+from playwright.async_api import Frame, Locator, Page, async_playwright
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from app.automation.base import ATSAdapter
 
+# Where the fields actually live. On a greenhouse.io-hosted posting that is the
+# page itself; on a company's own careers site it is the Greenhouse form they
+# embed in an iframe. Both are the same form with the same field ids, so every
+# fill step works against either — only the object owning the locators differs.
+FormContext = Page | Frame
+
+# Greenhouse serves embedded forms from this path, whatever site is framing it.
+EMBED_FRAME_MARKER = "greenhouse.io/embed"
+
 # How long to wait for the core name/email fields to appear before giving up —
-# either they're already on the page, or an "Apply" click needs to reveal them.
+# either they're already there, or an "Apply" click needs to reveal them.
 REVEAL_TIMEOUT_MS = 8000
+# Longer after clicking Apply: that can be a full navigation to another page
+# which then has to load an embedded form in an iframe of its own.
+APPLY_REVEAL_TIMEOUT_MS = 20000
+FORM_POLL_INTERVAL_MS = 400
 
 # react-select renders its option list only once the flyout is actually open.
 # Found live: the very first toggle click on a freshly-loaded page is sometimes
@@ -25,6 +41,9 @@ DROPDOWN_OPEN_TIMEOUT_MS = 500
 # budget — but only once the widget has proved it is live by opening at all,
 # which keeps a page whose JS never runs from costing the full wait.
 LOCATION_OPEN_TIMEOUT_MS = 800
+# Long enough for a late hydration pass to clobber a re-fill if it is going
+# to — measured at roughly two seconds on a real embedded form.
+REFILL_SETTLE_MS = 2500
 LOCATION_SEARCH_TIMEOUT_MS = 5000
 
 _IS_EXPANDED = "id => document.getElementById(id)?.getAttribute('aria-expanded') === 'true'"
@@ -103,11 +122,18 @@ class GreenhouseFormAdapter(ATSAdapter):
     """
 
     async def matches(self, application_url: str) -> bool:
-        # Deliberately narrow: only greenhouse.io's own hosted pages have the
-        # DOM shape this adapter was built against. A company's custom-branded
-        # careers page that embeds Greenhouse via an API (e.g. stripe.com's own
-        # career pages) is a structurally different form and not handled here.
-        return "greenhouse.io" in application_url
+        """Greenhouse-hosted postings, and branded careers sites that embed one.
+
+        A company running its own careers page still hands the application off
+        to Greenhouse in an iframe, and links to it with Greenhouse's own
+        gh_jid parameter — the same form, the same field ids, just framed. That
+        parameter is the reliable signal; the host name is not, since it is
+        whatever company owns the site.
+        """
+        parsed = urlparse(application_url)
+        if parsed.hostname and parsed.hostname.endswith("greenhouse.io"):
+            return True
+        return "gh_jid" in parse_qs(parsed.query)
 
     async def fill(self, application_url: str, payload: dict[str, Any]) -> dict[str, Any]:
         async with async_playwright() as pw:
@@ -120,46 +146,122 @@ class GreenhouseFormAdapter(ATSAdapter):
                 await browser.close()
 
     async def _fill_page(self, page: Page, payload: dict[str, Any]) -> FillResult:
-        if not await self._reveal_form(page):
+        form = await self._reveal_form(page)
+        if form is None:
             return FillResult(status="form_not_found", filled_fields={}, skipped_fields=[], screenshot=None)
 
         filled: dict[str, str] = {}
         skipped: list[str] = []
+        # Every plain text value written, kept so it can be read back at the end
+        # — see _confirm_text_fills for why believing .fill() is not enough.
+        text_fills: list[tuple[str, Locator, str]] = []
 
-        await self._fill_core_fields(page, payload, filled, skipped)
-        await self._fill_custom_questions(page, payload, filled, skipped)
+        await self._fill_core_fields(form, page, payload, filled, skipped, text_fills)
+        await self._fill_custom_questions(form, page, payload, filled, skipped, text_fills)
+        await self._confirm_text_fills(page, text_fills, filled, skipped)
 
         # Checked after filling, not before: a fully-filled form is what makes
         # the pending_captcha review screen useful — the human should see every
         # answer already in place and only need to solve the one checkbox.
-        status: FillStatus = "captcha_required" if await self._has_captcha(page) else "filled"
+        status: FillStatus = "captcha_required" if await self._has_captcha(page, form) else "filled"
+        # Always the page, never the frame: the human reviewing this needs to
+        # see the posting as it really looks, framing and all.
         screenshot = await page.screenshot(full_page=True)
 
         return FillResult(status=status, filled_fields=filled, skipped_fields=skipped, screenshot=screenshot)
 
-    async def _reveal_form(self, page: Page) -> bool:
-        if await self._wait_for_first_name(page):
-            return True
+    async def _reveal_form(self, page: Page) -> FormContext | None:
+        form = await self._poll_for_form(page, REVEAL_TIMEOUT_MS)
+        if form is not None:
+            return form
 
+        # A branded careers page usually shows the posting first and only loads
+        # the application behind an Apply link, which can be a real navigation.
         apply = page.locator("a:has-text('Apply'), button:has-text('Apply')").first
         if await apply.count() == 0:
-            return False
+            return None
         await apply.click()
-        return await self._wait_for_first_name(page)
+        return await self._poll_for_form(page, APPLY_REVEAL_TIMEOUT_MS)
 
-    async def _wait_for_first_name(self, page: Page) -> bool:
+    async def _poll_for_form(self, page: Page, timeout_ms: int) -> FormContext | None:
+        """Watch the page and its frames until the form turns up in one of them.
+
+        Polled rather than waited on: the form may arrive either in the page
+        itself or in an embed frame that does not exist yet, and there is no
+        single locator that covers both.
+        """
+        deadline = time.monotonic() + timeout_ms / 1000
+        while True:
+            if await self._has_first_name(page):
+                return page
+            for frame in page.frames:
+                if EMBED_FRAME_MARKER in frame.url and await self._has_first_name(frame):
+                    return frame
+            if time.monotonic() >= deadline:
+                return None
+            await page.wait_for_timeout(FORM_POLL_INTERVAL_MS)
+
+    async def _confirm_text_fills(
+        self,
+        page: Page,
+        text_fills: list[tuple[str, Locator, str]],
+        filled: dict[str, str],
+        skipped: list[str],
+    ) -> None:
+        """Read every written value back, re-write the ones that did not stick,
+        and demote whatever still will not hold.
+
+        Found live on an embedded form: the frame paints its fields before React
+        finishes hydrating, and hydration then resets anything written in that
+        window — measured at about two seconds, with first_name, last_name and
+        email silently emptied while the later fields survived. .fill() had
+        reported success for all of them, so the result claimed six filled
+        fields over a form showing three.
+
+        A fixed wait before filling would just be a guess at someone else's
+        hydration time. Reading the value back is the thing that is actually
+        true, and by the time this runs the slow work (a geo lookup, an LLM call
+        per question) has already given the page all the settling time it needs.
+        """
+        for key, locator, value in text_fills:
+            if await self._value_holds(locator, value):
+                continue
+
+            await locator.fill(value)
+            await page.wait_for_timeout(REFILL_SETTLE_MS)
+            if await self._value_holds(locator, value):
+                continue
+
+            # Never leave a claim standing that the form disagrees with.
+            filled.pop(key, None)
+            skipped.append(key)
+
+    async def _value_holds(self, locator: Locator, value: str) -> bool:
         try:
-            await page.locator(CORE_FIELD_SELECTORS["first_name"]).wait_for(timeout=REVEAL_TIMEOUT_MS)
-            return True
-        except PlaywrightTimeoutError:
+            return await locator.input_value() == value
+        except PlaywrightError:
+            return False
+
+    async def _has_first_name(self, form: FormContext) -> bool:
+        try:
+            return await form.locator(CORE_FIELD_SELECTORS["first_name"]).count() > 0
+        except PlaywrightError:
+            # A frame can be torn down mid-poll by the page navigating; that is
+            # simply "not the form", not a failure worth aborting the fill for.
             return False
 
     async def _fill_core_fields(
-        self, page: Page, payload: dict[str, Any], filled: dict[str, str], skipped: list[str]
+        self,
+        form: FormContext,
+        page: Page,
+        payload: dict[str, Any],
+        filled: dict[str, str],
+        skipped: list[str],
+        text_fills: list[tuple[str, Locator, str]],
     ) -> None:
         for field, selector in CORE_FIELD_SELECTORS.items():
             value = payload.get(field)
-            locator = page.locator(selector)
+            locator = form.locator(selector)
             if not value or await locator.count() == 0:
                 skipped.append(selector)
                 continue
@@ -168,7 +270,7 @@ class GreenhouseFormAdapter(ATSAdapter):
                 # not a plain text field — .fill() alone writes text the widget
                 # never treats as a real selection, so it has to be driven as a
                 # search-and-pick instead.
-                selected = await self._select_location(page, locator, str(value))
+                selected = await self._select_location(form, locator, str(value))
                 if selected is None:
                     skipped.append(selector)
                 else:
@@ -176,9 +278,10 @@ class GreenhouseFormAdapter(ATSAdapter):
                 continue
             await locator.fill(str(value))
             filled[selector] = str(value)
+            text_fills.append((selector, locator, str(value)))
 
         resume_bytes = payload.get("resume_bytes")
-        resume_field = page.locator("#resume")
+        resume_field = form.locator("#resume")
         if resume_bytes and await resume_field.count() > 0:
             await resume_field.set_input_files(
                 {
@@ -192,18 +295,24 @@ class GreenhouseFormAdapter(ATSAdapter):
             skipped.append("#resume")
 
     async def _fill_custom_questions(
-        self, page: Page, payload: dict[str, Any], filled: dict[str, str], skipped: list[str]
+        self,
+        form: FormContext,
+        page: Page,
+        payload: dict[str, Any],
+        filled: dict[str, str],
+        skipped: list[str],
+        text_fills: list[tuple[str, Locator, str]],
     ) -> None:
         answer_question = payload["answer_question"]
         choose_option = payload["choose_option"]
-        labels = page.locator("label[for^='question_']")
+        labels = form.locator("label[for^='question_']")
         is_first_dropdown = True
 
         for i in range(await labels.count()):
             label = labels.nth(i)
             field_id = await label.get_attribute("for")
             question_text = (await label.inner_text()).rstrip("*").strip()
-            field = page.locator(f"#{field_id}")
+            field = form.locator(f"#{field_id}")
 
             if await field.count() == 0:
                 continue
@@ -235,6 +344,7 @@ class GreenhouseFormAdapter(ATSAdapter):
                 # click is enough) or it never opened after three tries (nothing
                 # here is going to open, and retrying each one just burns time).
                 choice = await self._select_dropdown_option(
+                    form,
                     page,
                     field_id,
                     question_text,
@@ -251,6 +361,7 @@ class GreenhouseFormAdapter(ATSAdapter):
             answer = await answer_question(question_text)
             await field.fill(answer)
             filled[question_text] = answer
+            text_fills.append((question_text, field, answer))
 
     async def _is_combobox(self, field: Locator) -> bool:
         """True for a react-select "input that only filters a dropdown" —
@@ -267,15 +378,15 @@ class GreenhouseFormAdapter(ATSAdapter):
         # country list, for one).
         return f"[id^='react-select-{field_id}-option']"
 
-    async def _wait_until_expanded(self, page: Page, field_id: str, timeout: int) -> bool:
+    async def _wait_until_expanded(self, form: FormContext, field_id: str, timeout: int) -> bool:
         try:
-            await page.wait_for_function(_IS_EXPANDED, arg=field_id, timeout=timeout)
+            await form.wait_for_function(_IS_EXPANDED, arg=field_id, timeout=timeout)
             return True
         except PlaywrightTimeoutError:
             return False
 
-    async def _open_dropdown(self, page: Page, field_id: str, attempts: int) -> bool:
-        toggle = page.locator(
+    async def _open_dropdown(self, form: FormContext, field_id: str, attempts: int) -> bool:
+        toggle = form.locator(
             f"#{field_id} >> xpath=ancestor::div[contains(@class,'select__control')]"
             "//button[@aria-label='Toggle flyout']"
         ).first
@@ -284,18 +395,19 @@ class GreenhouseFormAdapter(ATSAdapter):
 
         for _ in range(attempts):
             await toggle.click()
-            if await self._wait_until_expanded(page, field_id, DROPDOWN_OPEN_TIMEOUT_MS):
+            if await self._wait_until_expanded(form, field_id, DROPDOWN_OPEN_TIMEOUT_MS):
                 return True
         return False
 
-    async def _read_options(self, page: Page, field_id: str) -> list[str]:
-        options = page.locator(self._option_selector(field_id))
+    async def _read_options(self, form: FormContext, field_id: str) -> list[str]:
+        options = form.locator(self._option_selector(field_id))
         return [
             (await options.nth(i).inner_text()).strip() for i in range(await options.count())
         ]
 
     async def _select_dropdown_option(
         self,
+        form: FormContext,
         page: Page,
         field_id: str,
         question_text: str,
@@ -308,10 +420,10 @@ class GreenhouseFormAdapter(ATSAdapter):
         uncertain: the flyout won't open, it has no options, or the caller
         declines or names something this form didn't actually offer.
         """
-        if not await self._open_dropdown(page, field_id, attempts):
+        if not await self._open_dropdown(form, field_id, attempts):
             return None
 
-        options = await self._read_options(page, field_id)
+        options = await self._read_options(form, field_id)
         if not options:
             await page.keyboard.press("Escape")
             return None
@@ -321,10 +433,10 @@ class GreenhouseFormAdapter(ATSAdapter):
             await page.keyboard.press("Escape")
             return None
 
-        await page.locator(self._option_selector(field_id)).nth(options.index(choice)).click()
+        await form.locator(self._option_selector(field_id)).nth(options.index(choice)).click()
         return choice
 
-    async def _select_location(self, page: Page, field: Locator, value: str) -> str | None:
+    async def _select_location(self, form: FormContext, field: Locator, value: str) -> str | None:
         """Drive candidate-location's type-to-search: type, wait for the geo
         suggestions, take the first one.
 
@@ -348,26 +460,37 @@ class GreenhouseFormAdapter(ATSAdapter):
             # its own JS reacts to the typing, so a page where nothing is live
             # fails here in under a second instead of burning the full lookup
             # budget. Only a widget that proved it is awake gets that budget.
-            if not await self._wait_until_expanded(page, field_id, LOCATION_OPEN_TIMEOUT_MS):
+            if not await self._wait_until_expanded(form, field_id, LOCATION_OPEN_TIMEOUT_MS):
                 continue
             try:
-                await page.locator(self._option_selector(field_id)).first.wait_for(
+                await form.locator(self._option_selector(field_id)).first.wait_for(
                     timeout=LOCATION_SEARCH_TIMEOUT_MS
                 )
             except PlaywrightTimeoutError:
                 continue
 
-            options = await self._read_options(page, field_id)
+            options = await self._read_options(form, field_id)
             if not options:
                 continue
-            await page.locator(self._option_selector(field_id)).first.click()
+            await form.locator(self._option_selector(field_id)).first.click()
             return options[0]
 
         await field.fill("")
         return None
 
-    async def _has_captcha(self, page: Page) -> bool:
-        count = await page.locator(
-            "iframe[src*='recaptcha'], iframe[src*='hcaptcha'], #g-recaptcha-response"
-        ).count()
-        return count > 0
+    async def _has_captcha(self, page: Page, form: FormContext) -> bool:
+        """True if anything on this page is guarding submission with a CAPTCHA.
+
+        Checked three ways because the widget moves around: on a hosted posting
+        it is markup in the page, on an embedded one it can be markup inside the
+        frame instead, and either way a live challenge shows up as a loaded
+        recaptcha/hcaptcha frame even when the element that spawned it is
+        somewhere this adapter is not looking.
+        """
+        if any(("recaptcha" in frame.url or "hcaptcha" in frame.url) for frame in page.frames):
+            return True
+
+        selector = "iframe[src*='recaptcha'], iframe[src*='hcaptcha'], #g-recaptcha-response"
+        if await page.locator(selector).count() > 0:
+            return True
+        return form is not page and await form.locator(selector).count() > 0
