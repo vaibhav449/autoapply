@@ -316,7 +316,9 @@ async def test_a_field_wiped_by_late_hydration_is_refilled(page) -> None:
     cleared while later fields survived. .fill() reported success for all of
     them, so the result claimed six filled fields over a form showing three.
 
-    The stub reproduces exactly that: one wipe, shortly after the value lands.
+    The stub reproduces exactly that: one wipe, triggered by the first write.
+    Driven by the input event rather than a timer on purpose — a timer races
+    the fill on a fast machine and stops reproducing anything.
     """
     await page.set_content(
         """
@@ -326,8 +328,14 @@ async def test_a_field_wiped_by_late_hydration_is_refilled(page) -> None:
             <label for="last_name">Last Name*</label><input id="last_name" type="text">
           </form>
           <script>
-            // one late reset, exactly like a hydration pass
-            setTimeout(() => { document.getElementById('first_name').value = ''; }, 600);
+            const el = document.getElementById('first_name');
+            window.__writes = 0;
+            el.addEventListener('input', () => { window.__writes += 1; });
+            // one reset, on the first write only, exactly like a hydration pass
+            el.addEventListener('input', function once() {
+              el.removeEventListener('input', once);
+              el.value = '';
+            });
           </script>
         </body></html>
         """
@@ -340,6 +348,9 @@ async def test_a_field_wiped_by_late_hydration_is_refilled(page) -> None:
     assert "#first_name" not in result["skipped_fields"]
     # and the claim is true of the form, not just of the return value
     assert await page.locator("#first_name").input_value() == "Ada"
+    # the repair really ran — without this the test would pass just as well on
+    # a stub that never wiped anything, proving nothing
+    assert await page.evaluate("window.__writes") == 2
 
 
 async def test_a_field_that_will_not_hold_a_value_is_reported_skipped(page) -> None:
@@ -354,9 +365,10 @@ async def test_a_field_that_will_not_hold_a_value_is_reported_skipped(page) -> N
             <label for="first_name">First Name*</label><input id="first_name" type="text">
           </form>
           <script>
-            // refuses every value, always
+            // refuses every write, synchronously, so there is no window in
+            // which a reader could see the value and believe it stuck
             const el = document.getElementById('first_name');
-            setInterval(() => { el.value = ''; }, 50);
+            el.addEventListener('input', () => { el.value = ''; });
           </script>
         </body></html>
         """
