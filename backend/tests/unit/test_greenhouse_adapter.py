@@ -249,15 +249,124 @@ async def test_the_submit_button_is_left_untouched(page) -> None:
     assert await submit.is_disabled() == was_disabled
 
 
-async def test_matches_only_greenhouse_hosted_urls() -> None:
+async def test_matches_greenhouse_hosted_and_embedded_postings() -> None:
+    """A branded careers site hands its application off to a Greenhouse form in
+    an iframe — same form, same field ids, just framed — and links to it with
+    Greenhouse's own gh_jid parameter. Checked live on stripe.com, whose apply
+    page loads job-boards.greenhouse.io/embed/job_app. The host name is not the
+    signal, since that is whichever company owns the site; gh_jid is.
+    """
     adapter = GreenhouseFormAdapter()
 
     assert await adapter.matches("https://job-boards.greenhouse.io/capco/jobs/8152797") is True
-    # A company's own custom-branded careers page that embeds Greenhouse via an
-    # API has a structurally different DOM — genuinely out of scope for this
-    # adapter, not a bug to fix here.
-    assert await adapter.matches("https://stripe.com/jobs/search?gh_jid=8007158") is False
+    assert await adapter.matches("https://stripe.com/jobs/search?gh_jid=8007158") is True
+    assert await adapter.matches("https://careers.example.com/roles/7?gh_jid=42&src=x") is True
+
     assert await adapter.matches("https://jobs.lever.co/acme/123") is False
+    assert await adapter.matches("https://example.com/jobs?id=8007158") is False
+    # not a Greenhouse domain just because the word appears in a path
+    assert await adapter.matches("https://example.com/greenhouse.io/jobs/1") is False
+
+
+async def test_fills_a_form_embedded_in_an_iframe(page) -> None:
+    """Checked live on stripe.com: a branded careers page has no form of its own
+    and loads job-boards.greenhouse.io/embed/job_app in an iframe instead. The
+    fields inside carry the same ids, so the only thing that changes is which
+    document owns them — routed here through a stub frame on that same URL.
+    """
+    embedded_form = (
+        "<html><body><form>"
+        "<label for='first_name'>First Name*</label><input id='first_name' type='text'>"
+        "<label for='last_name'>Last Name*</label><input id='last_name' type='text'>"
+        "<label for='email'>Email*</label><input id='email' type='text'>"
+        "<label for='question_1'>Who is your current employer?*</label>"
+        "<textarea id='question_1'></textarea>"
+        "</form></body></html>"
+    )
+    # The frame must really live on the embed URL, since that is what the
+    # adapter matches frames on — served here instead of fetched.
+    await page.route(
+        "**/embed/job_app*",
+        lambda route: route.fulfill(status=200, content_type="text/html", body=embedded_form),
+    )
+    await page.set_content(
+        "<html><body><h1>Careers</h1>"
+        "<iframe src='https://job-boards.greenhouse.io/embed/job_app?for=acme&token=1'></iframe>"
+        "</body></html>"
+    )
+
+    adapter = GreenhouseFormAdapter()
+    result = await adapter._fill_page(page, make_payload())
+
+    assert result["status"] != "form_not_found"
+    assert result["filled_fields"]["#first_name"] == "Ada"
+    assert result["filled_fields"]["#email"] == "ada@example.dev"
+    assert result["filled_fields"]["Who is your current employer?"] == (
+        "ANSWER[Who is your current employer?]"
+    )
+
+    frame = next(f for f in page.frames if "embed/job_app" in f.url)
+    assert await frame.locator("#first_name").input_value() == "Ada"
+
+
+async def test_a_field_wiped_by_late_hydration_is_refilled(page) -> None:
+    """Measured live on an embedded form: the fields paint before React finishes
+    hydrating, and hydration then empties anything written in that window —
+    around two seconds in, with first_name, last_name and email silently
+    cleared while later fields survived. .fill() reported success for all of
+    them, so the result claimed six filled fields over a form showing three.
+
+    The stub reproduces exactly that: one wipe, shortly after the value lands.
+    """
+    await page.set_content(
+        """
+        <html><body>
+          <form>
+            <label for="first_name">First Name*</label><input id="first_name" type="text">
+            <label for="last_name">Last Name*</label><input id="last_name" type="text">
+          </form>
+          <script>
+            // one late reset, exactly like a hydration pass
+            setTimeout(() => { document.getElementById('first_name').value = ''; }, 600);
+          </script>
+        </body></html>
+        """
+    )
+
+    adapter = GreenhouseFormAdapter()
+    result = await adapter._fill_page(page, make_payload())
+
+    assert result["filled_fields"]["#first_name"] == "Ada"
+    assert "#first_name" not in result["skipped_fields"]
+    # and the claim is true of the form, not just of the return value
+    assert await page.locator("#first_name").input_value() == "Ada"
+
+
+async def test_a_field_that_will_not_hold_a_value_is_reported_skipped(page) -> None:
+    """The other half: when re-filling still does not stick, the field must stop
+    being claimed as filled. Reporting a value the form does not have is the
+    failure this whole sweep exists to prevent.
+    """
+    await page.set_content(
+        """
+        <html><body>
+          <form>
+            <label for="first_name">First Name*</label><input id="first_name" type="text">
+          </form>
+          <script>
+            // refuses every value, always
+            const el = document.getElementById('first_name');
+            setInterval(() => { el.value = ''; }, 50);
+          </script>
+        </body></html>
+        """
+    )
+
+    adapter = GreenhouseFormAdapter()
+    result = await adapter._fill_page(page, make_payload())
+
+    assert "#first_name" not in result["filled_fields"]
+    assert "#first_name" in result["skipped_fields"]
 
 
 async def test_form_not_found_when_neither_the_form_nor_an_apply_trigger_exists(page) -> None:
