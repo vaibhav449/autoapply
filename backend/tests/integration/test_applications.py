@@ -1,8 +1,10 @@
 import base64
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from app.models.application import Application, ApplicationState
 from app.models.cover_letter import CoverLetter
+from app.models.draft_answer import DraftAnswer
 from app.models.job import Job as JobModel
 from app.models.profile import Profile
 from app.models.resume_variant import ResumeVariant
@@ -316,6 +318,96 @@ async def test_tailoring_does_not_overwrite_a_variant_already_chosen(db) -> None
 
     assert application.resume_variant_id == chosen.id
     matcher.assert_not_awaited()  # not even consulted
+
+
+async def _make_draft_answer(db, application, **overrides) -> DraftAnswer:
+    fields = {
+        "application_id": application.id,
+        "question_text": "Why do you want this role?",
+        "answer_text": "Generated text.",
+        "unverified_claims": ["a claim the model could not ground"],
+    }
+    answer = DraftAnswer(**{**fields, **overrides})
+    db.add(answer)
+    await db.commit()
+    await db.refresh(answer)
+    return answer
+
+
+async def test_editing_an_answer_replaces_the_text_and_regrounds_it(db, client) -> None:
+    """The flags describe what is in the text now, so they are recomputed rather
+    than cleared: an answer with three flagged claims where the human fixed one
+    would otherwise come back clean while the other two are still there.
+    """
+    profile, job = await _make_profile_and_job(db)
+    application = await get_or_create_application(profile, job, db)
+    answer = await _make_draft_answer(db, application)
+
+    with patch(
+        "app.api.v1.routers.applications.verify_grounding",
+        new=AsyncMock(return_value=SimpleNamespace(unverified_claims=["still unproven"])),
+    ) as verifier:
+        response = await client.patch(
+            f"/api/v1/applications/{application.id}/draft-answers/{answer.id}",
+            json={"answer_text": "My own wording."},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["answer_text"] == "My own wording."
+    assert response.json()["unverified_claims"] == ["still unproven"]
+    # re-grounded against the edited text, not the text it replaced
+    assert verifier.await_args.args[0] == "My own wording."
+
+    await db.refresh(answer)
+    assert answer.answer_text == "My own wording."
+
+
+async def test_editing_an_answer_can_clear_its_flags(db, client) -> None:
+    profile, job = await _make_profile_and_job(db)
+    application = await get_or_create_application(profile, job, db)
+    answer = await _make_draft_answer(db, application)
+
+    with patch(
+        "app.api.v1.routers.applications.verify_grounding",
+        new=AsyncMock(return_value=SimpleNamespace(unverified_claims=[])),
+    ):
+        response = await client.patch(
+            f"/api/v1/applications/{application.id}/draft-answers/{answer.id}",
+            json={"answer_text": "Something fully grounded."},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["unverified_claims"] == []
+
+
+async def test_editing_an_answer_belonging_to_another_application_is_404(db, client) -> None:
+    """Scoped by application, so an answer can't be rewritten by guessing its id."""
+    profile, job = await _make_profile_and_job(db)
+    owner = await get_or_create_application(profile, job, db)
+    answer = await _make_draft_answer(db, owner)
+
+    other_job = JobModel(
+        external_id="app-test-3",
+        source="greenhouse",
+        title="Other Role",
+        company="acme",
+        location=None,
+        url="https://example.test/3",
+        description="...",
+    )
+    db.add(other_job)
+    await db.commit()
+    await db.refresh(other_job)
+    stranger = await get_or_create_application(profile, other_job, db)
+
+    response = await client.patch(
+        f"/api/v1/applications/{stranger.id}/draft-answers/{answer.id}",
+        json={"answer_text": "Not mine to edit."},
+    )
+
+    assert response.status_code == 404
+    await db.refresh(answer)
+    assert answer.answer_text == "Generated text."
 
 
 async def test_fill_form_endpoint_returns_the_result_with_a_base64_screenshot(db, client) -> None:
