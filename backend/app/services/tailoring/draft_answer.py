@@ -8,7 +8,12 @@ from app.models.draft_answer import DraftAnswer
 from app.models.job import Job as JobModel
 from app.models.profile import Profile
 from app.services.llm_gateway import openai_client
-from app.services.tailoring.grounding import verify_grounding
+from app.services.tailoring.grounding import (
+    VERIFICATION_VERSION,
+    grounding_source,
+    structured_profile_block,
+    verify_grounding,
+)
 
 GENERATION_SYSTEM_PROMPT = (
     "Write a concise, first-person answer to this job application question, for the "
@@ -68,7 +73,14 @@ def answer_fingerprint(profile: Profile, job: JobModel) -> str:
     describing a person who no longer exists on paper.
     """
     payload = "\0".join(
-        [GENERATION_VERSION, profile.full_resume_text, job.description or ""]
+        [
+            GENERATION_VERSION,
+            # The row stores the grounding check's flags as well as the text, so
+            # they go stale when that check changes even though the answer does not.
+            VERIFICATION_VERSION,
+            profile.full_resume_text,
+            job.description or "",
+        ]
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
@@ -80,35 +92,6 @@ def _is_reusable(existing: DraftAnswer, fingerprint: str) -> bool:
     """
     return existing.fingerprint is None or existing.fingerprint == fingerprint
 
-
-def structured_profile_block(profile: Profile) -> str:
-    """The candidate's reliable, non-resume facts, for both prompts to read.
-
-    Only fields the candidate actually filled in are listed: an absent field
-    should read to the model as "not available" and produce an honest refusal,
-    which is exactly what omitting it does. Listing every field as "not
-    provided" would bury the ones that are.
-    """
-    lines = [
-        f"Location: {profile.location or 'not provided'}",
-        f"Years of professional experience: {profile.years_experience:g}",
-    ]
-    optional = (
-        ("Notice period / when they can start", profile.notice_period),
-        ("Current CTC", profile.current_ctc),
-        ("Expected CTC", profile.expected_ctc),
-        ("Preferred work locations", profile.preferred_locations),
-        ("Work authorization", profile.work_authorization),
-        ("LinkedIn profile", profile.linkedin_url),
-        ("Portfolio / GitHub / personal site", profile.portfolio_url),
-    )
-    lines.extend(f"{label}: {value}" for label, value in optional if value)
-    if profile.has_offer_in_hand is not None:
-        answer = "yes" if profile.has_offer_in_hand else "no"
-        lines.append(f"Currently holds another offer: {answer}")
-
-    body = "\n".join(lines)
-    return f"STRUCTURED PROFILE DATA (authoritative — prefer over resume prose):\n{body}"
 
 
 CHOICE_SYSTEM_PROMPT = (
@@ -290,7 +273,7 @@ async def ensure_draft_answer(
     # A draft answer, unlike a cover letter, is often pasted into a form field
     # near-verbatim rather than read and rewritten first — that raises the cost of
     # an unflagged hallucination, so this artifact gets the verification pass.
-    verification = await verify_grounding(content, profile.full_resume_text)
+    verification = await verify_grounding(content, grounding_source(profile))
 
     if existing is not None:
         # Updated in place rather than replaced: (application, question) is
