@@ -1321,6 +1321,87 @@ button[type="button"]:hover {
 }
 
 /* ==========================================================================
+   Analytics — funnel and tables
+   ========================================================================== */
+
+/* One measure across ordered stages, so one hue rather than a colour per bar:
+   different hues would say these are different things being compared, when it
+   is the same count surviving each step. Labels and numbers stay in text
+   tokens — the bar carries the magnitude, not the typography. */
+.funnel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.funnel-row {
+  display: grid;
+  grid-template-columns: 8.5rem 1fr 2.5rem;
+  align-items: center;
+  gap: 1rem;
+}
+
+.funnel-label {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.funnel-track {
+  background: var(--bg-inset);
+  border-radius: var(--radius-full);
+  height: 10px;
+  overflow: hidden;
+}
+
+.funnel-bar {
+  height: 100%;
+  background: var(--accent);
+  border-radius: var(--radius-full);
+}
+
+.funnel-count {
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.87rem;
+}
+
+.data-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.data-table td {
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+
+.data-table tr:last-child td {
+  border-bottom: none;
+}
+
+@media (max-width: 560px) {
+  .funnel-row {
+    grid-template-columns: 7rem 1fr 2.5rem;
+    gap: 0.6rem;
+  }
+}
+
+/* ==========================================================================
    Fill-form result — Playwright automation review
    ========================================================================== */
 
