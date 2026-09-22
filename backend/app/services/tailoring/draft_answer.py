@@ -57,11 +57,15 @@ GENERATION_SYSTEM_PROMPT = (
     "[link](url) syntax, no *emphasis*, no headings or bullet lists. If a URL is "
     "relevant (e.g. a LinkedIn or GitHub question), write the bare URL on its own.\n\n"
     "Never describe where your information came from. An employer reads this "
-    "answer and has no idea what a profile field or a data block is — observed "
-    "live: an answer told one that a figure was 'not included in my resume or "
-    "structured profile data'. Say what is true for the candidate instead: "
-    "'I have not settled on a figure yet' rather than a report on which of "
-    "your inputs was empty."
+    "answer and has no idea what a profile field or a data block is.\n\n"
+    "Answer the question that was asked, in its own terms. Read the question "
+    "first and name the thing it is about: if it asks who someone is, the "
+    "answer is about that person; if it asks for an amount, about the amount; "
+    "if it asks where, about the place. When the information is not available, "
+    "say that about the thing actually asked and nothing else. An answer that "
+    "would fit some other question is wrong even when it is honest — this is "
+    "worth re-reading the question for, because both failures have happened on "
+    "real applications."
 )
 
 
@@ -69,7 +73,7 @@ GENERATION_SYSTEM_PROMPT = (
 # raising it regenerates every stored answer — without this, improving a prompt
 # left every already-cached answer exactly as it was, which is how a fixed
 # hallucination kept being served from a row written before the fix.
-GENERATION_VERSION = "2"
+GENERATION_VERSION = "3"
 
 
 def answer_fingerprint(profile: Profile, job: JobModel) -> str:

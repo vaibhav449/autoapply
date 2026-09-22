@@ -1,6 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.automation.adapters.ashby import AshbyFormAdapter
 from app.automation.adapters.greenhouse import GreenhouseFormAdapter
 from app.automation.adapters.lever import LeverFormAdapter
 from app.automation.base import ATSAdapter, FillResult
@@ -23,7 +24,11 @@ from app.services.tailoring.resume_pdf import (
 # docstring for why a company's custom-branded careers page (a different DOM
 # entirely) doesn't fall under the Greenhouse adapter even when it embeds
 # Greenhouse underneath.
-ADAPTERS: list[ATSAdapter] = [GreenhouseFormAdapter(), LeverFormAdapter()]
+ADAPTERS: list[ATSAdapter] = [
+    GreenhouseFormAdapter(),
+    LeverFormAdapter(),
+    AshbyFormAdapter(),
+]
 
 
 class NoAdapterForUrl(ValueError):
