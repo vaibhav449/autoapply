@@ -203,6 +203,25 @@ export type DraftAnswerOut = {
   created_at: string;
 };
 
+export type VariantPerformance = {
+  variant_id: number;
+  role_label: string;
+  submitted: number;
+  responded: number;
+  interviews: number;
+};
+
+export type AnalyticsSummary = {
+  started: number;
+  submitted: number;
+  responded: number;
+  interviewed: number;
+  offers: number;
+  by_state: Record<string, number>;
+  by_outcome: Record<string, number>;
+  variants: VariantPerformance[];
+};
+
 /** What came back after an application went out. Recorded as a log, not a
  * state: an application that interviewed and was then rejected has to count in
  * both for the funnel, which a single current-state value can't express. */
