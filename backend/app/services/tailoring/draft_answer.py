@@ -20,7 +20,8 @@ GENERATION_SYSTEM_PROMPT = (
     "candidate below applying to the specific job described. Ground every claim "
     "strictly in the candidate's real resume and project content — never invent "
     "experience, skills, metrics, or achievements not present in that content.\n\n"
-    "STRUCTURED PROFILE DATA is given separately from the resume text and is "
+    "The DETAILS THE CANDIDATE PROVIDED block is given separately from the "
+    "resume text and is "
     "authoritative — prefer it over inferring the same fact from resume prose. In "
     "particular: a city named as an employer's or school's address in the resume is "
     "NOT the candidate's own location. Use the structured location field for "
@@ -54,7 +55,13 @@ GENERATION_SYSTEM_PROMPT = (
     "This answer is typed verbatim into a plain-text field on a real application "
     "form — it is never rendered as Markdown or HTML. Write plain text only: no "
     "[link](url) syntax, no *emphasis*, no headings or bullet lists. If a URL is "
-    "relevant (e.g. a LinkedIn or GitHub question), write the bare URL on its own."
+    "relevant (e.g. a LinkedIn or GitHub question), write the bare URL on its own.\n\n"
+    "Never describe where your information came from. An employer reads this "
+    "answer and has no idea what a profile field or a data block is — observed "
+    "live: an answer told one that a figure was 'not included in my resume or "
+    "structured profile data'. Say what is true for the candidate instead: "
+    "'I have not settled on a figure yet' rather than a report on which of "
+    "your inputs was empty."
 )
 
 
@@ -62,7 +69,7 @@ GENERATION_SYSTEM_PROMPT = (
 # raising it regenerates every stored answer — without this, improving a prompt
 # left every already-cached answer exactly as it was, which is how a fixed
 # hallucination kept being served from a row written before the fix.
-GENERATION_VERSION = "1"
+GENERATION_VERSION = "2"
 
 
 def answer_fingerprint(profile: Profile, job: JobModel) -> str:
@@ -108,13 +115,21 @@ CHOICE_SYSTEM_PROMPT = (
     "supplied as structured data when the candidate has given them. If the "
     "structured data above answers the question, pick the option matching it "
     "rather than replying NONE; if it is absent, reply NONE.\n\n"
+    "Work authorization and visa questions are answerable ONLY from the "
+    "structured work authorization field. Where the candidate lives, studied or "
+    "holds citizenship does not establish whether they need sponsorship in some "
+    "other country, and inferring one from the other is how an application ends "
+    "up carrying a false statement about immigration status. If that field is "
+    "absent, reply NONE however obvious the answer looks — observed live: asked "
+    "twice about US sponsorship with nothing on file, the same model answered "
+    "'Yes' and then 'No' on the same application.\n\n"
     "But an option that explicitly covers having none or little of something "
     "(\"No/Limited Experience\", \"None\", \"0 years\", \"No\") IS the grounded "
     "answer when the candidate's material shows they do not have it — that is "
     "what such an option exists for. Do not reply NONE just because the resume "
     "never mentions the thing being asked about; if it is an experience or skill "
     "the resume would have listed had they had it, its absence is the answer.\n\n"
-    "STRUCTURED PROFILE DATA is authoritative — prefer it over inferring the "
+    "The DETAILS THE CANDIDATE PROVIDED block is authoritative — prefer it over inferring the "
     "same fact from resume prose. Never invent experience the candidate does not "
     "have. An ongoing role dated through the present (e.g. an internship marked "
     "'... - Present') is real, current experience — do not treat the candidate "

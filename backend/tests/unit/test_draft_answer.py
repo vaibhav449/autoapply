@@ -87,7 +87,7 @@ async def test_generate_draft_answer_sends_structured_location_and_experience() 
         )
 
     sent = mock_create.await_args.kwargs["messages"][1]["content"]
-    assert "STRUCTURED PROFILE DATA" in sent
+    assert "DETAILS THE CANDIDATE PROVIDED" in sent
     assert "Raichur, Karnataka, India" in sent
     assert "Years of professional experience: 1" in sent
 

@@ -11,6 +11,11 @@ from app.services.tailoring.draft_answer import ensure_draft_answer
 
 QUESTION = "Exp working with AWS?"
 
+# Stands in for "whatever the next prompt version is". A literal like "2"
+# silently stops testing anything the day GENERATION_VERSION reaches it — which
+# is exactly what happened.
+BUMPED_VERSION = "version-under-test"
+
 
 async def _setup(db):
     profile = Profile(
@@ -94,7 +99,7 @@ async def test_a_prompt_change_regenerates_the_answer(db) -> None:
     gen.assert_awaited_once()
 
     with (
-        patch("app.services.tailoring.draft_answer.GENERATION_VERSION", "2"),
+        patch("app.services.tailoring.draft_answer.GENERATION_VERSION", BUMPED_VERSION),
         _generator("My resume does not mention AWS") as gen,
         _clean_grounding(),
     ):
@@ -114,7 +119,7 @@ async def test_regenerating_updates_the_row_rather_than_adding_one(db) -> None:
         original = await ensure_draft_answer(application, profile, job, QUESTION, db)
     original_id = original.id
 
-    with patch("app.services.tailoring.draft_answer.GENERATION_VERSION", "2"), _generator(
+    with patch("app.services.tailoring.draft_answer.GENERATION_VERSION", BUMPED_VERSION), _generator(
         "second"
     ), _clean_grounding():
         updated = await ensure_draft_answer(application, profile, job, QUESTION, db)
@@ -152,7 +157,7 @@ async def test_an_answer_a_person_edited_is_never_regenerated(db, client) -> Non
     profile.resume_text = "A completely different resume."
     await db.commit()
 
-    with patch("app.services.tailoring.draft_answer.GENERATION_VERSION", "99"), _generator(
+    with patch("app.services.tailoring.draft_answer.GENERATION_VERSION", BUMPED_VERSION), _generator(
         "regenerated over the human's words"
     ) as gen, _clean_grounding():
         kept = await ensure_draft_answer(application, profile, job, QUESTION, db)

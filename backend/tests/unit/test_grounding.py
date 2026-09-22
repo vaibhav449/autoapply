@@ -48,7 +48,7 @@ def test_the_verification_prompt_spares_the_four_things_that_are_not_claims() ->
 
     assert "does NOT have something" in prompt  # a denial
     assert "about the source material itself" in prompt  # "my resume does not specify"
-    assert "structured profile data" in prompt  # details the candidate supplied
+    assert "details the candidate provided" in prompt  # what they supplied directly
     assert "N/A" in prompt  # filler with no factual content
 
     # and it still asks for real fabrications

@@ -1,20 +1,20 @@
-import re
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any, Literal, TypedDict
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from playwright.async_api import Error as PlaywrightError
-from playwright.async_api import Frame, Locator, Page, async_playwright
+from playwright.async_api import Locator, Page, async_playwright
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
-from app.automation.base import ATSAdapter
-
-# Where the fields actually live. On a greenhouse.io-hosted posting that is the
-# page itself; on a company's own careers site it is the Greenhouse form they
-# embed in an iframe. Both are the same form with the same field ids, so every
-# fill step works against either — only the object owning the locators differs.
-FormContext = Page | Frame
+from app.automation.base import (
+    ATSAdapter,
+    FillResult,
+    FillStatus,
+    FormContext,
+    has_captcha,
+    is_consent_question,
+)
 
 # Greenhouse serves embedded forms from this path, whatever site is framing it.
 EMBED_FRAME_MARKER = "greenhouse.io/embed"
@@ -47,58 +47,6 @@ REFILL_SETTLE_MS = 2500
 LOCATION_SEARCH_TIMEOUT_MS = 5000
 
 _IS_EXPANDED = "id => document.getElementById(id)?.getAttribute('aria-expanded') === 'true'"
-
-# A question asking the candidate to accept a policy, not to answer something
-# about themselves — e.g. "Privacy Notice Acknowledgement". Found live: the
-# generator will happily draft "I acknowledge and agree..." text for one of
-# these, but consenting to a company's data-processing terms is the
-# candidate's own decision, not one to make on their behalf. A module-level
-# function (not adapter state) so a second ATS adapter can reuse it without
-# duplicating the pattern.
-CONSENT_QUESTION_PATTERN = re.compile(
-    r"acknowledg|privacy notice|\bconsent\b|terms and conditions|\bi agree\b|gdpr",
-    re.IGNORECASE,
-)
-
-
-def is_consent_question(question_text: str) -> bool:
-    return bool(CONSENT_QUESTION_PATTERN.search(question_text))
-
-
-class FillPayload(TypedDict):
-    """What fill() reads out of the loosely-typed `payload: dict[str, Any]` the
-    ATSAdapter interface specifies. Documents the real shape without widening
-    that interface — it's typed as dict[str, Any] because different ATS
-    platforms will eventually need different things in it.
-    """
-
-    first_name: str
-    last_name: str
-    email: str
-    phone: str | None
-    location: str | None
-    resume_bytes: bytes | None
-    resume_filename: str
-    # Called once per custom question actually found on the live form — the
-    # question text is only known once the real page is open, so it can't be
-    # precomputed into the payload the way the core fields can.
-    answer_question: Callable[[str], Awaitable[str]]
-    # Same idea for dropdowns, but the caller also gets the option list this
-    # specific form offers, and returns one of them (or None to leave it for the
-    # human). Separate from answer_question because a dropdown cannot accept
-    # free text at all — the choice has to come from the list or not happen.
-    choose_option: Callable[[str, list[str]], Awaitable[str | None]]
-
-
-FillStatus = Literal["filled", "captcha_required", "form_not_found"]
-
-
-class FillResult(TypedDict):
-    status: FillStatus
-    filled_fields: dict[str, str]
-    skipped_fields: list[str]
-    screenshot: bytes | None
-
 
 # Greenhouse's own core fields carry stable ids across every job-boards.greenhouse.io
 # posting — this is part of their platform, unlike the per-job custom questions
@@ -163,7 +111,7 @@ class GreenhouseFormAdapter(ATSAdapter):
         # Checked after filling, not before: a fully-filled form is what makes
         # the pending_captcha review screen useful — the human should see every
         # answer already in place and only need to solve the one checkbox.
-        status: FillStatus = "captcha_required" if await self._has_captcha(page, form) else "filled"
+        status: FillStatus = "captcha_required" if await has_captcha(page, form) else "filled"
         # Always the page, never the frame: the human reviewing this needs to
         # see the posting as it really looks, framing and all.
         screenshot = await page.screenshot(full_page=True)
@@ -478,19 +426,3 @@ class GreenhouseFormAdapter(ATSAdapter):
         await field.fill("")
         return None
 
-    async def _has_captcha(self, page: Page, form: FormContext) -> bool:
-        """True if anything on this page is guarding submission with a CAPTCHA.
-
-        Checked three ways because the widget moves around: on a hosted posting
-        it is markup in the page, on an embedded one it can be markup inside the
-        frame instead, and either way a live challenge shows up as a loaded
-        recaptcha/hcaptcha frame even when the element that spawned it is
-        somewhere this adapter is not looking.
-        """
-        if any(("recaptcha" in frame.url or "hcaptcha" in frame.url) for frame in page.frames):
-            return True
-
-        selector = "iframe[src*='recaptcha'], iframe[src*='hcaptcha'], #g-recaptcha-response"
-        if await page.locator(selector).count() > 0:
-            return True
-        return form is not page and await form.locator(selector).count() > 0

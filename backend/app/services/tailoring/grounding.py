@@ -29,7 +29,7 @@ VERIFICATION_SYSTEM_PROMPT = (
     "specify how long', 'that information isn't included here'. That describes "
     "the document, not the candidate.\n"
     "- Contact details, links, locations, salary figures, notice periods or "
-    "availability that appear in the structured profile data. The candidate "
+    "availability that appear in the details the candidate provided. They "
     "supplied those directly; they are source material, not invention.\n"
     "- Filler with no factual content at all: 'N/A', 'Not applicable', an offer "
     "to provide more detail on request.\n\n"
@@ -67,7 +67,11 @@ def structured_profile_block(profile: Profile) -> str:
         lines.append(f"Currently holds another offer: {answer}")
 
     body = "\n".join(lines)
-    return f"STRUCTURED PROFILE DATA (authoritative — prefer over resume prose):\n{body}"
+    # Worded so it still reads as English if the model echoes it. The previous
+    # heading did not: an answer told an employer that a figure was "not
+    # included in my resume or structured profile data", which is this system's
+    # own vocabulary leaking onto a real application.
+    return f"DETAILS THE CANDIDATE PROVIDED (authoritative — prefer over resume prose):\n{body}"
 
 
 def grounding_source(profile: Profile) -> str:

@@ -1,8 +1,9 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.automation.adapters.greenhouse import FillResult, GreenhouseFormAdapter
-from app.automation.base import ATSAdapter
+from app.automation.adapters.greenhouse import GreenhouseFormAdapter
+from app.automation.adapters.lever import LeverFormAdapter
+from app.automation.base import ATSAdapter, FillResult
 from app.models.application import Application, ApplicationState
 from app.models.job import Job as JobModel
 from app.models.profile import Profile
@@ -22,7 +23,7 @@ from app.services.tailoring.resume_pdf import (
 # docstring for why a company's custom-branded careers page (a different DOM
 # entirely) doesn't fall under the Greenhouse adapter even when it embeds
 # Greenhouse underneath.
-ADAPTERS: list[ATSAdapter] = [GreenhouseFormAdapter()]
+ADAPTERS: list[ATSAdapter] = [GreenhouseFormAdapter(), LeverFormAdapter()]
 
 
 class NoAdapterForUrl(ValueError):
@@ -97,6 +98,10 @@ async def fill_application_form(
         "email": profile.email,
         "phone": profile.phone,
         "location": profile.location,
+        # Lever asks for these outright; Greenhouse leaves them to a custom
+        # question, where they reach the form through answer_question instead.
+        "linkedin_url": profile.linkedin_url,
+        "portfolio_url": profile.portfolio_url,
         "resume_bytes": resume_bytes,
         "resume_filename": resume_filename,
         "answer_question": answer_question,
