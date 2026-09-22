@@ -6,7 +6,11 @@ from app.models.profile import Profile
 from app.models.resume_variant import ResumeVariant
 from app.services.llm_gateway import openai_client
 from app.services.scoring.embeddings import embed_text
-from app.services.tailoring.grounding import VerificationResult, verify_grounding  # noqa: F401
+from app.services.tailoring.grounding import (  # noqa: F401
+    VerificationResult,
+    grounding_source,
+    verify_grounding,
+)
 
 # VerificationResult/verify_grounding are re-exported, not just used internally:
 # existing tests and callers import them from this module, and patch
@@ -73,7 +77,7 @@ async def create_resume_variant(
 ) -> ResumeVariant:
     sample_jobs = await find_representative_jds(role_label, db)
     content = await generate_resume_variant(profile, role_label, emphasis_note, sample_jobs)
-    verification = await verify_grounding(content, profile.full_resume_text)
+    verification = await verify_grounding(content, grounding_source(profile))
 
     variant = ResumeVariant(
         profile_id=profile.id,

@@ -26,7 +26,7 @@ from app.services.automation import NoAdapterForUrl, fill_application_form
 from app.services.discovery.liveness import Liveness, check_job_liveness
 from app.services.tailoring.attach import attach_tailoring_artifacts
 from app.services.tailoring.draft_answer import ensure_draft_answer
-from app.services.tailoring.grounding import verify_grounding
+from app.services.tailoring.grounding import grounding_source, verify_grounding
 
 router = APIRouter()
 
@@ -203,7 +203,7 @@ async def update_draft_answer(
         )
 
     profile, _ = await _load_profile_and_job(application, db)
-    verification = await verify_grounding(payload.answer_text, profile.full_resume_text)
+    verification = await verify_grounding(payload.answer_text, grounding_source(profile))
 
     answer.answer_text = payload.answer_text
     answer.unverified_claims = verification.unverified_claims

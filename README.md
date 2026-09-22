@@ -22,12 +22,24 @@ docker compose up -d postgres redis
 
 cd backend
 pip install -e ".[dev]"
-uvicorn app.main:app --reload
+playwright install chromium
+uvicorn app.main:app
 
 cd ../frontend
 npm install
 npm run dev
 ```
+
+**Run the backend without `--reload`.** On Windows that flag switches uvicorn to
+a `SelectorEventLoop`, which cannot spawn subprocesses, so Playwright fails to
+launch Chromium and every form fill dies with `NotImplementedError`. Nothing
+else in the app notices, which makes it look like a bug in the automation
+rather than in how the server was started. Restart the process by hand after
+backend edits, or keep `--reload` only while working on code that never fills
+a form.
+
+`playwright install chromium` is separate from `pip install`: pip brings the
+Python package, not the browser binary the form filler drives.
 
 ## Status
 
