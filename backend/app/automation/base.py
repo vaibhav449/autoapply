@@ -57,7 +57,33 @@ CONSENT_QUESTION_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-CAPTCHA_SELECTOR = "iframe[src*='recaptcha'], iframe[src*='hcaptcha'], #g-recaptcha-response"
+# Hosts that serve a challenge instead of the page when they decide a visitor is
+# automated. Found live on SmartRecruiters, which hands back a DataDome wall
+# from geo.captcha-delivery.com rather than the application form — none of the
+# recaptcha/hcaptcha markers appear, so without this a fill would report an
+# empty form rather than a wall only a human can clear.
+#
+# Each entry is specific enough to mean "a challenge is being served": the bare
+# word "cloudflare" would match cdnjs.cloudflare.com on any page that loads a
+# library from it, and call every one of them a CAPTCHA.
+BOT_WALL_HOSTS = (
+    "captcha-delivery.com",
+    "datadome",
+    "perimeterx",
+    "px-cloud",
+    "challenges.cloudflare.com",
+)
+
+CAPTCHA_SELECTOR = ", ".join(
+    [
+        "iframe[src*='recaptcha']",
+        "iframe[src*='hcaptcha']",
+        "#g-recaptcha-response",
+        # Matched in the markup as well as by frame URL: a challenge iframe that
+        # has not loaded yet (or was blocked) still shows up here.
+        *(f"iframe[src*='{host}']" for host in BOT_WALL_HOSTS),
+    ]
+)
 
 
 def is_consent_question(question_text: str) -> bool:
@@ -73,8 +99,11 @@ async def has_captcha(page: Page, form: FormContext | None = None) -> bool:
     recaptcha/hcaptcha frame even when the element that spawned it is somewhere
     the adapter is not looking.
     """
-    if any(("recaptcha" in frame.url or "hcaptcha" in frame.url) for frame in page.frames):
-        return True
+    for frame in page.frames:
+        if "recaptcha" in frame.url or "hcaptcha" in frame.url:
+            return True
+        if any(host in frame.url for host in BOT_WALL_HOSTS):
+            return True
     if await page.locator(CAPTCHA_SELECTOR).count() > 0:
         return True
     return form is not None and form is not page and await form.locator(CAPTCHA_SELECTOR).count() > 0
