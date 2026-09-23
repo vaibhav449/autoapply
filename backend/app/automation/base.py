@@ -38,8 +38,10 @@ class FillPayload(TypedDict):
     resume_filename: str
     # Called once per custom question actually found on the live form — the
     # question text is only known once the real page is open, so it can't be
-    # precomputed into the payload the way the core fields can.
-    answer_question: Callable[[str], Awaitable[str]]
+    # precomputed into the payload the way the core fields can. The second
+    # argument is the field's own character limit (None when it sets none), so
+    # the answer can be written to fit rather than cut off by the browser.
+    answer_question: Callable[[str, int | None], Awaitable[str]]
     # Same idea for dropdowns, but the caller also gets the option list this
     # specific form offers, and returns one of them (or None to leave it for the
     # human). Separate from answer_question because a dropdown cannot accept
@@ -89,6 +91,50 @@ CAPTCHA_SELECTOR = ", ".join(
 
 def is_consent_question(question_text: str) -> bool:
     return bool(CONSENT_QUESTION_PATTERN.search(question_text))
+
+
+async def max_length_of(field: Locator) -> int | None:
+    """The field's own character limit, or None when it declares none.
+
+    Measured across six live Greenhouse postings: 20 of 63 text fields carry
+    maxlength=255 — every single-line question input — while the answers
+    generated for them average 154 characters and one in ten runs past 255.
+    The browser silently keeps the first 255, so an answer that does not know
+    the limit ends mid-word on the submitted form.
+    """
+    try:
+        limit = await field.evaluate("el => el.maxLength")
+    except PlaywrightError:
+        return None
+    # Chromium reports -1 for "no limit set".
+    return limit if isinstance(limit, int) and limit > 0 else None
+
+
+async def fill_text_answer(
+    field: Locator,
+    question_text: str,
+    answer_question: Callable[[str, int | None], Awaitable[str]],
+    filled: dict[str, str],
+    skipped: list[str],
+    text_fills: list[tuple[str, Locator, str]],
+) -> None:
+    """Answer one free-text question, within the field's own limit.
+
+    The limit is passed to the caller so the answer can be written to fit, and
+    enforced here as well: an answer that still does not fit is never written
+    at all. Writing it would let the browser cut it off mid-sentence, and the
+    read-back sweep would then have to notice and undo that after the fact.
+    Every adapter answers free text the same way, so it lives here once.
+    """
+    limit = await max_length_of(field)
+    answer = await answer_question(question_text, limit)
+    if limit is not None and len(answer) > limit:
+        skipped.append(question_text)
+        return
+
+    await field.fill(answer)
+    filled[question_text] = answer
+    text_fills.append((question_text, field, answer))
 
 
 async def file_is_attached(form: FormContext, locator: Locator, filename: str) -> bool:

@@ -14,6 +14,7 @@ from app.automation.base import (
     FormContext,
     clear_text_field,
     confirm_file_fill,
+    fill_text_answer,
     has_captcha,
     is_consent_question,
 )
@@ -315,10 +316,9 @@ class GreenhouseFormAdapter(ATSAdapter):
                     filled[question_text] = choice
                 continue
 
-            answer = await answer_question(question_text)
-            await field.fill(answer)
-            filled[question_text] = answer
-            text_fills.append((question_text, field, answer))
+            await fill_text_answer(
+                field, question_text, answer_question, filled, skipped, text_fills
+            )
 
     async def _is_combobox(self, field: Locator) -> bool:
         """True for a react-select "input that only filters a dropdown" —

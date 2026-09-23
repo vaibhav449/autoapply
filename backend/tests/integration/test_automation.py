@@ -330,8 +330,39 @@ async def test_custom_questions_are_answered_through_the_cached_draft_answer_pat
         await fill_application_form(application, profile, job, db)
         answer_question = captured_callback["answer_question"]
 
-        first = await answer_question("Why do you want this role?")
-        second = await answer_question("Why do you want this role?")
+        first = await answer_question("Why do you want this role?", None)
+        second = await answer_question("Why do you want this role?", None)
 
     assert first == second == "A real, grounded answer."
     mock_generate.assert_awaited_once()  # second call was a cache hit, not a regeneration
+
+
+async def test_the_fields_limit_reaches_the_generator(db) -> None:
+    """The adapter reads the limit off the live field; this is the path that
+    carries it the rest of the way, to where the answer is actually written.
+    """
+    profile, job = await _make_profile_and_job(db)
+    application = await get_or_create_application(profile, job, db)
+
+    captured = {}
+
+    async def capture_and_fill(self, application_url, payload):
+        captured["answer_question"] = payload["answer_question"]
+        return fake_result("filled")
+
+    with (
+        patch("app.services.automation.GreenhouseFormAdapter.fill", new=capture_and_fill),
+        patch(
+            "app.services.tailoring.draft_answer.generate_draft_answer",
+            new=AsyncMock(return_value="Fits."),
+        ) as mock_generate,
+        patch(
+            "app.services.tailoring.draft_answer.verify_grounding",
+            new=AsyncMock(return_value=type("R", (), {"unverified_claims": []})()),
+        ),
+    ):
+        await fill_application_form(application, profile, job, db)
+        answer = await captured["answer_question"]("How many years with React?", 255)
+
+    assert answer == "Fits."
+    assert mock_generate.await_args.args[3] == 255

@@ -287,3 +287,69 @@ async def test_generate_draft_answer_raises_on_empty_content() -> None:
         pytest.raises(ValueError),
     ):
         await generate_draft_answer(make_profile(), make_job(), "Anything?")
+
+
+CREATE = "app.services.tailoring.draft_answer.openai_client.chat.completions.create"
+
+
+def completions_in_order(*contents: str) -> AsyncMock:
+    responses = []
+    for content in contents:
+        response = AsyncMock()
+        response.choices = [AsyncMock(message=AsyncMock(content=content))]
+        responses.append(response)
+    return AsyncMock(side_effect=responses)
+
+
+async def test_the_first_request_never_mentions_the_limit() -> None:
+    """Measured on six real questions: stating the limit up front made short
+    answers grow filler toward it (a plain 42-character answer became 150) and
+    long ones lose their last sentence — which is where "how many years" was
+    being answered. So an answer that fits is generated exactly as it would be
+    with no limit at all, and nothing already cached is invalidated by this.
+    """
+    with patch(CREATE, new=mock_completion("Short.")) as unlimited:
+        await generate_draft_answer(make_profile(), make_job(), "Years with React?")
+    with patch(CREATE, new=mock_completion("Short.")) as limited:
+        content = await generate_draft_answer(
+            make_profile(), make_job(), "Years with React?", max_length=255
+        )
+
+    assert content == "Short."
+    limited.assert_awaited_once()
+    assert limited.await_args.kwargs["messages"] == unlimited.await_args.kwargs["messages"]
+
+
+async def test_an_answer_over_the_limit_gets_exactly_one_shortening_pass() -> None:
+    long, short = "x" * 301, "A shorter answer."
+    with patch(CREATE, new=completions_in_order(long, short)) as mock_create:
+        content = await generate_draft_answer(
+            make_profile(), make_job(), "Years with React?", max_length=255
+        )
+
+    assert content == short
+    assert mock_create.await_count == 2
+    first = mock_create.await_args_list[0].kwargs["messages"]
+    retry = mock_create.await_args_list[1].kwargs["messages"]
+    assert len(first) == 2  # the first request is not rewritten after the fact
+    # the rewrite sees its own too-long answer and the real overshoot
+    assert retry[-2] == {"role": "assistant", "content": long}
+    assert "301 characters" in retry[-1]["content"]
+    assert "at most 255" in retry[-1]["content"]
+    # the rewrite aims under the line, not at it
+    assert "under 216 characters" in retry[-1]["content"]
+
+
+async def test_an_answer_that_will_not_fit_comes_back_whole_never_cut() -> None:
+    """Truncating here would put a sentence ending mid-word into the draft.
+    Whatever still does not fit after one rewrite is returned as it is; the
+    form-filler refuses to write it and the field is left for the human.
+    """
+    still_long = "y" * 300
+    with patch(CREATE, new=completions_in_order("x" * 301, still_long)) as mock_create:
+        content = await generate_draft_answer(
+            make_profile(), make_job(), "Years with React?", max_length=255
+        )
+
+    assert content == still_long
+    assert mock_create.await_count == 2  # one rewrite, not a loop

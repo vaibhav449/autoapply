@@ -164,3 +164,93 @@ async def test_an_answer_a_person_edited_is_never_regenerated(db, client) -> Non
 
     gen.assert_not_awaited()
     assert kept.answer_text == "What I actually want to say."
+
+
+def _generator_by_limit(fitting: str, unbounded: str):
+    """Stands in for the real generator's behaviour: an answer written with no
+    limit in view can run long, and one written against a limit fits it.
+    """
+
+    async def generate(profile, job, question_text, max_length=None):
+        return unbounded if max_length is None else fitting
+
+    return patch(
+        "app.services.tailoring.draft_answer.generate_draft_answer",
+        new=AsyncMock(side_effect=generate),
+    )
+
+
+async def test_an_answer_that_already_fits_the_field_is_not_regenerated(db) -> None:
+    profile, job, application = await _setup(db)
+
+    with _generator("fits easily") as gen, _clean_grounding():
+        await ensure_draft_answer(application, profile, job, QUESTION, db)
+        await ensure_draft_answer(application, profile, job, QUESTION, db, max_length=255)
+
+    gen.assert_awaited_once()
+
+
+async def test_an_answer_too_long_for_the_field_is_regenerated_to_fit(db) -> None:
+    """The Capco case: a 301-character answer cached for a question whose field
+    holds 255. Reusing it would mean a skipped field on every fill, forever.
+    """
+    profile, job, application = await _setup(db)
+
+    with _generator("x" * 301), _clean_grounding():
+        first = await ensure_draft_answer(application, profile, job, QUESTION, db)
+
+    with _generator("fits now") as gen, _clean_grounding():
+        fitted = await ensure_draft_answer(
+            application, profile, job, QUESTION, db, max_length=255
+        )
+
+    gen.assert_awaited_once()
+    assert gen.await_args.args[3] == 255  # the limit reached the generator
+    assert fitted.id == first.id  # updated in place, not a second row
+    assert fitted.answer_text == "fits now"
+
+
+async def test_a_fitted_answer_survives_the_generate_button(db) -> None:
+    """The limit is left out of the fingerprint on purpose. Were it in, the
+    button (no field, no limit) and a fill (limit 255) would each see the
+    other's answer as stale and regenerate over it on every visit — paying for
+    a new answer each time and never settling on one.
+    """
+    profile, job, application = await _setup(db)
+
+    with _generator_by_limit(fitting="fits", unbounded="x" * 301) as gen, _clean_grounding():
+        await ensure_draft_answer(application, profile, job, QUESTION, db)
+        await ensure_draft_answer(application, profile, job, QUESTION, db, max_length=255)
+        button = await ensure_draft_answer(application, profile, job, QUESTION, db)
+        refill = await ensure_draft_answer(application, profile, job, QUESTION, db, max_length=255)
+
+    assert gen.await_count == 2  # once unbounded, once to fit — then settled
+    assert button.answer_text == refill.answer_text == "fits"
+
+
+async def test_a_person_written_answer_is_never_rewritten_to_fit(db, client) -> None:
+    """Too long for the field or not, a candidate's own words stay theirs. The
+    fill refuses to write it and leaves that field to them; nothing here
+    regenerates over it.
+    """
+    profile, job, application = await _setup(db)
+
+    with _generator("generated text"), _clean_grounding():
+        answer = await ensure_draft_answer(application, profile, job, QUESTION, db)
+
+    their_words = "What I actually want to say, at whatever length I want to say it."
+    with patch(
+        "app.api.v1.routers.applications.verify_grounding",
+        new=AsyncMock(return_value=type("R", (), {"unverified_claims": []})()),
+    ):
+        edited = await client.patch(
+            f"/api/v1/applications/{application.id}/draft-answers/{answer.id}",
+            json={"answer_text": their_words},
+        )
+    assert edited.status_code == 200
+
+    with _generator("rewritten to fit") as gen, _clean_grounding():
+        kept = await ensure_draft_answer(application, profile, job, QUESTION, db, max_length=20)
+
+    gen.assert_not_awaited()
+    assert kept.answer_text == their_words

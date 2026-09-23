@@ -96,12 +96,23 @@ def answer_fingerprint(profile: Profile, job: JobModel) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
 
-def _is_reusable(existing: DraftAnswer, fingerprint: str) -> bool:
+def _is_reusable(existing: DraftAnswer, fingerprint: str, max_length: int | None = None) -> bool:
     """A NULL fingerprint means a person wrote this answer, so it is theirs and
-    stays put however far the prompt has moved on. Anything else is ours, and is
-    only reusable while it still matches what it would be generated from now.
+    stays put however far the prompt has moved on — even when it is too long for
+    the field in front of it, which the fill then leaves for them rather than
+    rewriting their words. Anything else is ours, and is only reusable while it
+    still matches what it would be generated from now and fits where it is going.
+
+    The limit is not part of the fingerprint on purpose. An answer that fits is
+    a good answer whatever it was generated under, so the "Generate answer"
+    button (which knows no field) and a fill (which does) settle on the same
+    row instead of regenerating over each other on every visit.
     """
-    return existing.fingerprint is None or existing.fingerprint == fingerprint
+    if existing.fingerprint is None:
+        return True
+    if existing.fingerprint != fingerprint:
+        return False
+    return max_length is None or len(existing.answer_text) <= max_length
 
 
 
@@ -234,30 +245,78 @@ async def ensure_draft_option(
     return choice
 
 
-async def generate_draft_answer(profile: Profile, job: JobModel, question_text: str) -> str:
+# A shortening rewrite aims comfortably under the field's limit rather than at
+# it: aim at the line and a fair share of rewrites land just over.
+LENGTH_TARGET_RATIO = 0.85
+
+
+async def _complete(messages: list[dict[str, str]]) -> str:
     completion = await openai_client.chat.completions.create(
         model="gpt-4o-mini",
         # Deterministic on purpose, same reasoning as job-requirements extraction:
         # ensure_draft_answer caches the result permanently, so sampling variance
         # would freeze one unlucky answer onto the row forever.
         temperature=0,
-        messages=[
-            {"role": "system", "content": GENERATION_SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": (
-                    f"{structured_profile_block(profile)}\n\n"
-                    f"CANDIDATE RESUME AND PROJECTS:\n{profile.full_resume_text}\n\n"
-                    f"JOB: {job.title} at {job.company}\n\n"
-                    f"JOB DESCRIPTION:\n{job.description or '(no description available)'}\n\n"
-                    f"APPLICATION QUESTION:\n{question_text}"
-                ),
-            },
-        ],
+        messages=messages,
     )
     content = completion.choices[0].message.content
     if content is None:
         raise ValueError("LLM returned no content for draft answer generation.")
+    return content
+
+
+async def generate_draft_answer(
+    profile: Profile, job: JobModel, question_text: str, max_length: int | None = None
+) -> str:
+    """max_length is the form field's own character limit, when known.
+
+    The first request never mentions it. Measured on six real questions:
+    stating the limit up front — even framed as a ceiling — made short answers
+    grow filler toward it (one plain 42-character answer became 150), and made
+    long ones get trimmed from the end, which is where the sentence answering a
+    "how many years" question happened to sit. Asked plainly, the model puts
+    the right content in and only sometimes too much of it.
+
+    So an answer that fits is exactly what it would have been with no limit at
+    all, and one that does not gets a single rewrite, done from the complete
+    answer so the model can see what the question needs kept. One, not a loop:
+    what still will not fit after that is left for the human, never cut to size
+    here. Either way verify_grounding checks the final text like any other.
+    """
+    messages = [
+        {"role": "system", "content": GENERATION_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": (
+                f"{structured_profile_block(profile)}\n\n"
+                f"CANDIDATE RESUME AND PROJECTS:\n{profile.full_resume_text}\n\n"
+                f"JOB: {job.title} at {job.company}\n\n"
+                f"JOB DESCRIPTION:\n{job.description or '(no description available)'}\n\n"
+                f"APPLICATION QUESTION:\n{question_text}"
+            ),
+        },
+    ]
+    content = await _complete(messages)
+
+    if max_length is not None and len(content) > max_length:
+        target = int(max_length * LENGTH_TARGET_RATIO)
+        content = await _complete(
+            [
+                *messages,
+                {"role": "assistant", "content": content},
+                {
+                    "role": "user",
+                    "content": (
+                        f"That answer is {len(content)} characters, and the form field "
+                        f"holds at most {max_length} — anything longer is cut off "
+                        f"mid-sentence. Rewrite it in under {target} characters. Keep "
+                        f"what directly answers the question as asked, cut supporting "
+                        f"detail first, and add nothing it does not already say."
+                    ),
+                },
+            ]
+        )
+
     return content
 
 
@@ -267,9 +326,11 @@ async def ensure_draft_answer(
     job: JobModel,
     question_text: str,
     db: AsyncSession,
+    max_length: int | None = None,
 ) -> DraftAnswer:
     """Generate once per (application, question), and again whenever what it was
-    generated from has moved on.
+    generated from has moved on — or when the field it is going into cannot hold
+    it (max_length, when the caller knows the field).
 
     Caching on the question alone is what let a fixed hallucination keep being
     served: the prompt was corrected, but every answer written before the fix
@@ -285,10 +346,10 @@ async def ensure_draft_answer(
         )
     )
     existing = result.scalar_one_or_none()
-    if existing is not None and _is_reusable(existing, fingerprint):
+    if existing is not None and _is_reusable(existing, fingerprint, max_length):
         return existing
 
-    content = await generate_draft_answer(profile, job, question_text)
+    content = await generate_draft_answer(profile, job, question_text, max_length)
     # A draft answer, unlike a cover letter, is often pasted into a form field
     # near-verbatim rather than read and rewritten first — that raises the cost of
     # an unflagged hallucination, so this artifact gets the verification pass.

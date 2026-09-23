@@ -31,7 +31,7 @@ async def page():
         await browser.close()
 
 
-async def fake_answer(question: str) -> str:
+async def fake_answer(question: str, max_length: int | None) -> str:
     return f"ANSWER[{question}]"
 
 
@@ -141,7 +141,7 @@ async def test_answers_the_free_text_questions(page) -> None:
     adapter = AshbyFormAdapter()
     asked: list[str] = []
 
-    async def recording_answer(question: str) -> str:
+    async def recording_answer(question: str, max_length: int | None) -> str:
         asked.append(question)
         return f"ANSWER[{question}]"
 

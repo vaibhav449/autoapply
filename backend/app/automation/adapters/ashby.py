@@ -11,6 +11,7 @@ from app.automation.base import (
     FillStatus,
     clear_text_field,
     confirm_file_fill,
+    fill_text_answer,
     has_captcha,
     is_consent_question,
 )
@@ -198,11 +199,9 @@ class AshbyFormAdapter(ATSAdapter):
             elif await checkboxes.count() > 0:
                 choice = await self._choose_checkbox(checkboxes.first, question_text, choose_option)
             elif await texts.count() > 0:
-                field = texts.first
-                answer = await answer_question(question_text)
-                await field.fill(answer)
-                filled[question_text] = answer
-                text_fills.append((question_text, field, answer))
+                await fill_text_answer(
+                    texts.first, question_text, answer_question, filled, skipped, text_fills
+                )
                 continue
             else:
                 # A file question (a cover-letter upload, say). Nothing is
