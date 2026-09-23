@@ -1,4 +1,3 @@
-import base64
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -13,7 +12,7 @@ from app.services.discovery.liveness import Liveness
 from app.services.tailoring.attach import attach_tailoring_artifacts
 
 
-async def _make_profile_and_job(db) -> tuple[Profile, JobModel]:
+async def _make_profile_and_job(db, url: str = "https://example.test/1") -> tuple[Profile, JobModel]:
     profile = Profile(
         name="Test Candidate", email="test@example.dev", resume_text="...", years_experience=1.0
     )
@@ -23,7 +22,9 @@ async def _make_profile_and_job(db) -> tuple[Profile, JobModel]:
         title="Backend Engineer",
         company="acme",
         location=None,
-        url="https://example.test/1",
+        # Default matches no ATS adapter on purpose — most tests here never get
+        # near a real form, and the no-adapter path is itself under test below.
+        url=url,
         description="...",
     )
     db.add_all([profile, job])
@@ -410,20 +411,30 @@ async def test_editing_an_answer_belonging_to_another_application_is_404(db, cli
     assert answer.answer_text == "Generated text."
 
 
-async def test_fill_form_endpoint_returns_the_result_with_a_base64_screenshot(db, client) -> None:
-    profile, job = await _make_profile_and_job(db)
+PNG = b"\x89PNG\r\n\x1a\nfake"
+
+
+def _fake_fill(status: str = "filled", screenshot: bytes | None = PNG) -> AsyncMock:
+    """Stands in for the browser only — everything downstream of the adapter
+    (persisting the attempt, serving it back) is the real code path.
+    """
+    return AsyncMock(
+        return_value={
+            "status": status,
+            "filled_fields": {"#first_name": "Test"},
+            "skipped_fields": ["#candidate-location"],
+            "screenshot": screenshot,
+        }
+    )
+
+
+async def test_fill_form_endpoint_returns_the_recorded_attempt(db, client) -> None:
+    profile, job = await _make_profile_and_job(
+        db, url="https://job-boards.greenhouse.io/acme/jobs/1"
+    )
     application = await get_or_create_application(profile, job, db)
 
-    fake_result = {
-        "status": "filled",
-        "filled_fields": {"#first_name": "Test"},
-        "skipped_fields": ["#candidate-location"],
-        "screenshot": b"\x89PNG\r\n\x1a\nfake",
-    }
-    with patch(
-        "app.api.v1.routers.applications.fill_application_form",
-        new=AsyncMock(return_value=fake_result),
-    ):
+    with patch("app.services.automation.GreenhouseFormAdapter.fill", new=_fake_fill()):
         response = await client.post(f"/api/v1/applications/{application.id}/fill-form")
 
     assert response.status_code == 200
@@ -431,7 +442,132 @@ async def test_fill_form_endpoint_returns_the_result_with_a_base64_screenshot(db
     assert body["status"] == "filled"
     assert body["filled_fields"] == {"#first_name": "Test"}
     assert body["skipped_fields"] == ["#candidate-location"]
-    assert base64.b64decode(body["screenshot_base64"]) == fake_result["screenshot"]
+    assert body["has_screenshot"] is True
+    assert body["duration_ms"] >= 0
+    assert body["id"] > 0
+
+
+async def test_a_filled_form_is_still_there_after_the_reviewer_comes_back(db, client) -> None:
+    """The whole point of the table: the review this supports sends someone off
+    to the live posting to submit by hand, and before this the result lived in
+    React state that the trip away destroyed.
+    """
+    profile, job = await _make_profile_and_job(
+        db, url="https://job-boards.greenhouse.io/acme/jobs/1"
+    )
+    application = await get_or_create_application(profile, job, db)
+
+    with patch("app.services.automation.GreenhouseFormAdapter.fill", new=_fake_fill()):
+        await client.post(f"/api/v1/applications/{application.id}/fill-form")
+
+    response = await client.get(f"/api/v1/applications/{application.id}/fill-attempts")
+
+    assert response.status_code == 200
+    attempts = response.json()
+    assert len(attempts) == 1
+    assert attempts[0]["skipped_fields"] == ["#candidate-location"]
+
+
+async def test_every_run_is_kept_newest_first(db, client) -> None:
+    """A fill retried after a human clears a CAPTCHA is a second attempt, and
+    what changed between the two is the useful part.
+    """
+    profile, job = await _make_profile_and_job(
+        db, url="https://job-boards.greenhouse.io/acme/jobs/1"
+    )
+    application = await get_or_create_application(profile, job, db)
+
+    with patch(
+        "app.services.automation.GreenhouseFormAdapter.fill", new=_fake_fill("captcha_required")
+    ):
+        await client.post(f"/api/v1/applications/{application.id}/fill-form")
+    with patch("app.services.automation.GreenhouseFormAdapter.fill", new=_fake_fill("filled")):
+        await client.post(f"/api/v1/applications/{application.id}/fill-form")
+
+    attempts = (
+        await client.get(f"/api/v1/applications/{application.id}/fill-attempts")
+    ).json()
+
+    assert [attempt["status"] for attempt in attempts] == ["filled", "captcha_required"]
+
+
+async def test_the_screenshot_is_served_as_a_png(db, client) -> None:
+    profile, job = await _make_profile_and_job(
+        db, url="https://job-boards.greenhouse.io/acme/jobs/1"
+    )
+    application = await get_or_create_application(profile, job, db)
+
+    with patch("app.services.automation.GreenhouseFormAdapter.fill", new=_fake_fill()):
+        attempt = (
+            await client.post(f"/api/v1/applications/{application.id}/fill-form")
+        ).json()
+
+    response = await client.get(
+        f"/api/v1/applications/{application.id}/fill-attempts/{attempt['id']}/screenshot"
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    assert response.content == PNG
+
+
+async def test_an_attempt_without_a_screenshot_says_so_instead_of_serving_nothing(
+    db, client
+) -> None:
+    """A run that never found the form has no screenshot, so has_screenshot is
+    what stops the page rendering a broken image.
+    """
+    profile, job = await _make_profile_and_job(
+        db, url="https://job-boards.greenhouse.io/acme/jobs/1"
+    )
+    application = await get_or_create_application(profile, job, db)
+
+    with patch(
+        "app.services.automation.GreenhouseFormAdapter.fill",
+        new=_fake_fill("form_not_found", screenshot=None),
+    ):
+        attempt = (
+            await client.post(f"/api/v1/applications/{application.id}/fill-form")
+        ).json()
+
+    assert attempt["has_screenshot"] is False
+    response = await client.get(
+        f"/api/v1/applications/{application.id}/fill-attempts/{attempt['id']}/screenshot"
+    )
+    assert response.status_code == 404
+
+
+async def test_another_applications_screenshot_is_not_reachable(db, client) -> None:
+    """The attempt id is in the path next to an application id, and nothing but
+    this check stops the two disagreeing.
+    """
+    profile, job = await _make_profile_and_job(
+        db, url="https://job-boards.greenhouse.io/acme/jobs/1"
+    )
+    application = await get_or_create_application(profile, job, db)
+    other = JobModel(
+        external_id="app-test-2",
+        source="greenhouse",
+        title="Other",
+        company="acme",
+        location=None,
+        url="https://job-boards.greenhouse.io/acme/jobs/2",
+        description="...",
+    )
+    db.add(other)
+    await db.commit()
+    other_application = await get_or_create_application(profile, other, db)
+
+    with patch("app.services.automation.GreenhouseFormAdapter.fill", new=_fake_fill()):
+        attempt = (
+            await client.post(f"/api/v1/applications/{application.id}/fill-form")
+        ).json()
+
+    response = await client.get(
+        f"/api/v1/applications/{other_application.id}/fill-attempts/{attempt['id']}/screenshot"
+    )
+
+    assert response.status_code == 404
 
 
 async def test_fill_form_endpoint_is_422_when_no_adapter_matches_the_job_url(db, client) -> None:

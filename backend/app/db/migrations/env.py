@@ -13,6 +13,7 @@ from app.models import (  # noqa: F401  (imports register models on Base.metadat
     ats_board,
     cover_letter,
     draft_answer,
+    fill_attempt,
     job,
     profile,
     resume_variant,

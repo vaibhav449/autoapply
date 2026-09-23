@@ -1,5 +1,6 @@
 from app.models.application import ApplicationState
 from app.models.application_outcome import OutcomeKind
+from app.models.fill_attempt import FillAttempt, FillAttemptStatus
 from app.models.job import Job as JobModel
 from app.models.profile import Profile
 from app.models.resume_variant import ResumeVariant
@@ -152,3 +153,54 @@ async def test_summary_endpoint_returns_the_shape_the_page_reads(db, client) -> 
     assert body["by_state"] == {"submitted": 1}
     assert body["by_outcome"] == {}
     assert body["variants"] == []
+    assert body["fill_runs"] == 0
+    assert body["skipped_fields"] == []
+
+
+async def _attempt(db, application, skipped: list[str]) -> None:
+    db.add(
+        FillAttempt(
+            application_id=application.id,
+            status=FillAttemptStatus.FILLED,
+            filled_fields={"#email": "test@example.dev"},
+            skipped_fields=skipped,
+            screenshot=None,
+            duration_ms=1000,
+        )
+    )
+    await db.commit()
+
+
+async def test_the_most_skipped_fields_are_ranked_by_applications_affected(db) -> None:
+    """The ranking answers "what should the adapters learn next", so it counts
+    applications rather than runs — a form filled three times over is one
+    problem, not three.
+    """
+    profile = await _profile(db)
+    first = await _submitted(db, profile, "a")
+    second = await _submitted(db, profile, "b")
+
+    # Twice on the same application: one problem, seen twice.
+    await _attempt(db, first, ["#candidate-location", "Notice period"])
+    await _attempt(db, first, ["#candidate-location", "Notice period"])
+    # Once elsewhere, so this one has reached two applications and outranks it.
+    await _attempt(db, second, ["#candidate-location"])
+
+    summary = await application_analytics(db)
+
+    assert summary.fill_runs == 3
+    assert [(row.field, row.applications, row.runs) for row in summary.skipped_fields] == [
+        ("#candidate-location", 2, 3),
+        ("Notice period", 1, 2),
+    ]
+
+
+async def test_a_run_that_skipped_nothing_contributes_no_rows(db) -> None:
+    profile = await _profile(db)
+    application = await _submitted(db, profile, "a")
+    await _attempt(db, application, [])
+
+    summary = await application_analytics(db)
+
+    assert summary.fill_runs == 1
+    assert summary.skipped_fields == []

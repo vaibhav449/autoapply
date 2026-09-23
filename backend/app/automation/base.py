@@ -3,7 +3,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal, TypedDict
 
-from playwright.async_api import Frame, Page
+from playwright.async_api import Error as PlaywrightError
+from playwright.async_api import Frame, Locator, Page
 
 # Where the fields actually live. Usually the page itself; on a company's own
 # careers site it is the ATS form they embed in an iframe. Every fill step works
@@ -88,6 +89,86 @@ CAPTCHA_SELECTOR = ", ".join(
 
 def is_consent_question(question_text: str) -> bool:
     return bool(CONSENT_QUESTION_PATTERN.search(question_text))
+
+
+async def file_is_attached(form: FormContext, locator: Locator, filename: str) -> bool:
+    """Whether the form really has the file, by either of the two ways it shows.
+
+    The obvious signal is the input still holding it, and on a plain
+    <input type=file> that is the whole story. It is not on Greenhouse: measured
+    live, once its uploader hydrates it takes the file and removes the input
+    element from the DOM altogether, rendering the name as a chip instead. So
+    the input is not merely empty there, it is *gone* — asking it anything waits
+    out the full locator timeout and then reports a missing resume over a form
+    that visibly has one. That is how the first version of this check went
+    wrong, and it cost thirty seconds a call while doing it.
+
+    Hence both signals, and count() before evaluate() so a vanished input is a
+    fast no rather than a timeout.
+    """
+    try:
+        if await locator.count() > 0 and await locator.evaluate(
+            "el => Boolean(el.files && el.files.length)"
+        ):
+            return True
+        return await form.get_by_text(filename, exact=False).count() > 0
+    except PlaywrightError:
+        return False
+
+
+async def confirm_file_fill(
+    page: Page,
+    form: FormContext,
+    file_fills: list[tuple[str, Locator, dict]],
+    filled: dict[str, str],
+    skipped: list[str],
+    settle_ms: int,
+) -> None:
+    """The file-input half of the read-back sweep every adapter runs.
+
+    Same reasoning as the text one: re-attach what the form dropped, and stop
+    claiming anything it still will not hold. A resume reported as attached
+    over a form showing an empty upload control is the worst version of this
+    failure, because it is the field a reviewer is least likely to re-check.
+    """
+    for key, locator, file_payload in file_fills:
+        filename = str(file_payload["name"])
+        if await file_is_attached(form, locator, filename):
+            continue
+
+        try:
+            await locator.set_input_files(file_payload)
+        except PlaywrightError:
+            pass
+        else:
+            await page.wait_for_timeout(settle_ms)
+            if await file_is_attached(form, locator, filename):
+                continue
+
+        filled.pop(key, None)
+        skipped.append(key)
+
+
+async def clear_text_field(locator: Locator) -> None:
+    """Empty a field whose value is about to be reported as skipped.
+
+    A fragment is worse than nothing. Found live on a Greenhouse question with
+    maxlength=255 answered in 301 characters: the browser kept the first 255,
+    so reading the value back disagreed with what was written and the field was
+    demoted to skipped — while the form still showed half a sentence, ending
+    mid-word, that a reviewer trusting the "skipped" label would submit without
+    ever looking at it.
+
+    Every adapter demotes a write it cannot confirm, so every adapter has to
+    undo one too; the reasoning has nothing to do with which ATS is rendering
+    the field.
+    """
+    try:
+        await locator.fill("")
+    except PlaywrightError:
+        # A field that cannot even be cleared (detached, disabled, replaced by a
+        # re-render) is one nothing can be claimed about either way.
+        pass
 
 
 async def has_captcha(page: Page, form: FormContext | None = None) -> bool:

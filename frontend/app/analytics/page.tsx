@@ -186,6 +186,50 @@ export default async function AnalyticsPage() {
             )}
           </section>
 
+          {summary.fill_runs > 0 && (
+            <section className="card">
+              <div className="card-head">
+                <div className="card-head-text">
+                  <h2>What the filler keeps leaving for you</h2>
+                  <p className="text-muted text-small">
+                    Across {summary.fill_runs} {summary.fill_runs === 1 ? "run" : "runs"} of the
+                    form-filler. Ranked by applications affected rather than by raw count, since
+                    one form filled three times over is one problem, not three. Two different
+                    things land here: a control no adapter handles yet, and a question that was
+                    refused on purpose — a sponsorship answer or a consent box is a skip working
+                    correctly.
+                  </p>
+                </div>
+              </div>
+              {summary.skipped_fields.length === 0 ? (
+                <p className="text-muted text-small">
+                  Nothing was skipped in any recorded run.
+                </p>
+              ) : (
+                <div className="table-scroll">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Field or question</th>
+                        <th>Applications</th>
+                        <th>Runs</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {summary.skipped_fields.map((skipped) => (
+                        <tr key={skipped.field}>
+                          <td>{skipped.field}</td>
+                          <td>{skipped.applications}</td>
+                          <td>{skipped.runs}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          )}
+
           <section className="card">
             <div className="card-head">
               <div className="card-head-text">
@@ -213,9 +257,10 @@ export default async function AnalyticsPage() {
           </section>
 
           <p className="text-muted text-small">
-            Not shown: time saved and LLM cost, both of which MVP.md lists. Neither is recorded
-            anywhere yet — fill results are returned and discarded, and no token spend is
-            tracked — so any figure here would be an invented constant dressed up as a
+            Not shown: time saved and LLM cost, both of which MVP.md lists. How long each fill
+            takes is now measured and kept, but the manual baseline it would be subtracted from
+            is not — nobody has timed filling these forms by hand — and no token spend is
+            tracked either. Either figure would be an invented constant dressed up as a
             measurement.
           </p>
         </>

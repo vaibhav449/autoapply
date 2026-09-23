@@ -1,8 +1,7 @@
-import base64
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Response
+from sqlalchemy import Row, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -14,7 +13,7 @@ from app.models.job import Job as JobModel
 from app.models.profile import Profile
 from app.schemas.application import ApplicationCreate, ApplicationOut, ApplicationTransition
 from app.schemas.application_outcome import ApplicationOutcomeCreate, ApplicationOutcomeOut
-from app.schemas.automation import FillFormResultOut
+from app.schemas.automation import FillAttemptOut
 from app.schemas.draft_answer import DraftAnswerCreate, DraftAnswerOut, DraftAnswerUpdate
 from app.services.applications import (
     IllegalStateTransition,
@@ -22,7 +21,13 @@ from app.services.applications import (
     get_or_create_application,
     record_outcome,
 )
-from app.services.automation import NoAdapterForUrl, fill_application_form
+from app.services.automation import (
+    NoAdapterForUrl,
+    fill_application_form,
+    get_fill_attempt,
+    get_fill_attempt_screenshot,
+    list_fill_attempts,
+)
 from app.services.discovery.liveness import Liveness, check_job_liveness
 from app.services.tailoring.attach import attach_tailoring_artifacts
 from app.services.tailoring.draft_answer import ensure_draft_answer
@@ -240,9 +245,9 @@ async def list_application_outcomes(
     return list(result.scalars().all())
 
 
-@router.post("/{application_id}/fill-form", response_model=FillFormResultOut)
-async def fill_form(application_id: int, db: AsyncSession = Depends(get_db)) -> FillFormResultOut:
-    """Drive the real ATS form with a headless browser and return what happened —
+@router.post("/{application_id}/fill-form", response_model=FillAttemptOut)
+async def fill_form(application_id: int, db: AsyncSession = Depends(get_db)) -> Row:
+    """Drive the real ATS form with a headless browser and record what happened —
     never submits it, per MVP.md's non-negotiable human-approval gate. Safe to
     call from any application state (see fill_application_form's docstring);
     the frontend decides when to offer this action.
@@ -251,14 +256,49 @@ async def fill_form(application_id: int, db: AsyncSession = Depends(get_db)) -> 
     profile, job = await _load_profile_and_job(application, db)
 
     try:
-        result = await fill_application_form(application, profile, job, db)
+        attempt = await fill_application_form(application, profile, job, db)
     except NoAdapterForUrl as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    screenshot = result["screenshot"]
-    return FillFormResultOut(
-        status=result["status"],
-        filled_fields=result["filled_fields"],
-        skipped_fields=result["skipped_fields"],
-        screenshot_base64=base64.b64encode(screenshot).decode("ascii") if screenshot else None,
-    )
+    # Read back through the same projection the list endpoint uses, so a fresh
+    # attempt and a remembered one are the exact same shape to every caller.
+    row = await get_fill_attempt(attempt.id, db)
+    assert row is not None  # just written in this request
+    return row
+
+
+@router.get("/{application_id}/fill-attempts", response_model=list[FillAttemptOut])
+async def list_application_fill_attempts(
+    application_id: int, db: AsyncSession = Depends(get_db)
+) -> list[Row]:
+    """Every run of the filler against this application, newest first.
+
+    Kept rather than overwritten: a fill retried after a human clears a CAPTCHA
+    is a second attempt, and what changed between them is the useful part.
+    """
+    await _get_application_or_404(application_id, db)
+    return await list_fill_attempts(application_id, db)
+
+
+@router.get("/{application_id}/fill-attempts/{attempt_id}/screenshot")
+async def get_application_fill_screenshot(
+    application_id: int, attempt_id: int, db: AsyncSession = Depends(get_db)
+) -> Response:
+    """The filled form as the browser saw it. Linked to rather than inlined in
+    the attempt JSON — see FillAttemptOut.
+    """
+    await _get_application_or_404(application_id, db)
+    attempt = await get_fill_attempt(attempt_id, db)
+    if attempt is None or attempt.application_id != application_id:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Fill attempt {attempt_id} not found for application {application_id}",
+        )
+
+    screenshot = await get_fill_attempt_screenshot(attempt_id, db)
+    if screenshot is None:
+        raise HTTPException(
+            status_code=404, detail=f"Fill attempt {attempt_id} has no screenshot"
+        )
+
+    return Response(content=screenshot, media_type="image/png")

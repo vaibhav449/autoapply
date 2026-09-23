@@ -1,16 +1,22 @@
+from typing import get_args
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.automation.adapters.greenhouse import FillResult
+from app.automation.base import FillResult, FillStatus
 from app.models.application import ApplicationState
 from app.models.draft_answer import DraftAnswer
+from app.models.fill_attempt import FillAttempt, FillAttemptStatus
 from app.models.job import Job as JobModel
 from app.models.profile import Profile
 from app.services.applications import apply_transition, get_or_create_application
-from app.services.automation import NoAdapterForUrl, fill_application_form
+from app.services.automation import (
+    NoAdapterForUrl,
+    fill_application_form,
+    list_fill_attempts,
+)
 
 
 async def _make_profile_and_job(db, url: str = "https://job-boards.greenhouse.io/acme/jobs/1") -> tuple:
@@ -66,7 +72,7 @@ async def test_captcha_required_moves_a_reviewable_application_to_pending_captch
     ):
         result = await fill_application_form(application, profile, job, db)
 
-    assert result["status"] == "captcha_required"
+    assert result.status == FillAttemptStatus.CAPTCHA_REQUIRED
     assert application.state == ApplicationState.PENDING_CAPTCHA
 
 
@@ -85,7 +91,7 @@ async def test_captcha_required_from_a_non_reviewable_state_does_not_crash(db) -
     ):
         result = await fill_application_form(application, profile, job, db)
 
-    assert result["status"] == "captcha_required"
+    assert result.status == FillAttemptStatus.CAPTCHA_REQUIRED
     assert application.state == ApplicationState.INTERESTED
 
 
@@ -100,7 +106,7 @@ async def test_a_clean_fill_leaves_the_state_untouched(db) -> None:
     ):
         result = await fill_application_form(application, profile, job, db)
 
-    assert result["status"] == "filled"
+    assert result.status == FillAttemptStatus.FILLED
     assert application.state == ApplicationState.READY_FOR_REVIEW
 
 
@@ -149,7 +155,7 @@ async def test_fill_skips_the_resume_rather_than_crashing_on_unrenderable_text(d
     with patch("app.services.automation.GreenhouseFormAdapter.fill", new=capture_and_fill):
         result = await fill_application_form(application, profile, job, db)
 
-    assert result["status"] == "filled"
+    assert result.status == FillAttemptStatus.FILLED
     assert captured_payload["resume_bytes"] is None
 
 
@@ -221,6 +227,78 @@ async def test_no_adapter_for_an_unrecognized_url_raises(db) -> None:
 
     with pytest.raises(NoAdapterForUrl):
         await fill_application_form(application, profile, job, db)
+
+
+async def test_fill_attempt_status_matches_fill_status(db) -> None:
+    """The adapter layer names a status as a Literal and the database as an
+    enum, on purpose — a module that drives a browser has no business importing
+    a model to get a string. This is what keeps the two lists identical instead
+    of trusting that nobody adds a status to one of them alone.
+    """
+    assert {member.value for member in FillAttemptStatus} == set(get_args(FillStatus))
+
+
+async def test_the_run_is_recorded_in_full(db) -> None:
+    profile, job = await _make_profile_and_job(db)
+    application = await get_or_create_application(profile, job, db)
+    await _to_ready_for_review(application, db)
+
+    with patch(
+        "app.services.automation.GreenhouseFormAdapter.fill",
+        new=AsyncMock(return_value=fake_result("filled", {"#email": "ada@example.dev"})),
+    ):
+        attempt = await fill_application_form(application, profile, job, db)
+
+    stored = (
+        await db.execute(select(FillAttempt).where(FillAttempt.id == attempt.id))
+    ).scalar_one()
+    assert stored.application_id == application.id
+    assert stored.filled_fields == {"#email": "ada@example.dev"}
+    assert stored.screenshot == b"png"
+    assert stored.duration_ms >= 0
+
+
+async def test_the_attempt_is_kept_even_when_the_state_change_is_illegal(db) -> None:
+    """A captcha from a state pending_captcha can't be reached from must not
+    take the record of the run down with it — the attempt is committed before
+    the transition is tried for exactly this case.
+    """
+    profile, job = await _make_profile_and_job(db)
+    application = await get_or_create_application(profile, job, db)
+    assert application.state == ApplicationState.INTERESTED
+
+    with patch(
+        "app.services.automation.GreenhouseFormAdapter.fill",
+        new=AsyncMock(return_value=fake_result("captcha_required")),
+    ):
+        await fill_application_form(application, profile, job, db)
+
+    rows = (
+        await db.execute(
+            select(FillAttempt).where(FillAttempt.application_id == application.id)
+        )
+    ).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].status == FillAttemptStatus.CAPTCHA_REQUIRED
+
+
+async def test_reading_attempts_back_never_loads_the_screenshot(db) -> None:
+    """has_screenshot is computed in SQL so that listing a run's history does
+    not pull every full-page PNG out of Postgres to answer a yes/no question.
+    """
+    profile, job = await _make_profile_and_job(db)
+    application = await get_or_create_application(profile, job, db)
+
+    with patch(
+        "app.services.automation.GreenhouseFormAdapter.fill",
+        new=AsyncMock(return_value=fake_result("filled")),
+    ):
+        await fill_application_form(application, profile, job, db)
+
+    rows = await list_fill_attempts(application.id, db)
+
+    assert [row.has_screenshot for row in rows] == [True]
+    assert not hasattr(rows[0], "screenshot")
 
 
 async def test_custom_questions_are_answered_through_the_cached_draft_answer_path(db) -> None:

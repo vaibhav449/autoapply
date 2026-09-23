@@ -15,6 +15,7 @@ import {
   type ApplicationOut,
   type ApplicationOutcomeOut,
   type DraftAnswerOut,
+  type FillAttemptOut,
   type OutcomeKind,
   type JobOut,
   type ProfileOut,
@@ -29,11 +30,12 @@ export default async function ApplicationDetailPage({
   const applicationId = Number(id);
 
   const application = await apiGet<ApplicationOut>(`/api/v1/applications/${id}`);
-  const [profile, job, draftAnswers, outcomes] = await Promise.all([
+  const [profile, job, draftAnswers, outcomes, fillAttempts] = await Promise.all([
     apiGet<ProfileOut>(`/api/v1/profiles/${application.profile_id}`),
     apiGet<JobOut>(`/api/v1/jobs/${application.job_id}`),
     apiGet<DraftAnswerOut[]>(`/api/v1/applications/${id}/draft-answers`),
     apiGet<ApplicationOutcomeOut[]>(`/api/v1/applications/${id}/outcomes`),
+    apiGet<FillAttemptOut[]>(`/api/v1/applications/${id}/fill-attempts`),
   ]);
 
   const transitionWithId = transitionApplication.bind(null, applicationId);
@@ -106,7 +108,7 @@ export default async function ApplicationDetailPage({
         )}
       </section>
 
-      <FillFormPanel applicationId={application.id} />
+      <FillFormPanel applicationId={application.id} attempts={fillAttempts} />
 
       {(canRecordOutcome || outcomes.length > 0) && (
         <section className="card">
