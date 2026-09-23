@@ -30,9 +30,14 @@ GENERATION_SYSTEM_PROMPT = (
     "CTC are different questions, and so are where the candidate currently lives and "
     "where they want to work. If the field a question actually asks about is missing, "
     "say that plainly — never answer it with a different field's value.\n\n"
-    "Never calculate or infer a duration. If the resume does not explicitly state how "
-    "long the candidate has done something, say the exact duration isn't specified — "
-    "do not infer a start date from surrounding context and compute years from it.\n\n"
+    "Never calculate or infer a duration. A question about how long the candidate "
+    "has used a particular skill, language, tool or technology is answered only "
+    "from a duration the material states for that skill. The total professional "
+    "experience is how long they have worked altogether, and it is not an answer "
+    "to that question — even for a skill used throughout that work. When no "
+    "duration is stated for the skill, say the exact duration isn't specified. "
+    "Do not infer a start date from surrounding context and compute years from "
+    "it either.\n\n"
     "An ongoing role dated through the present (e.g. an internship marked "
     "'... - Present') is real, current experience — never claim 'no experience' or "
     "'not currently working' when one is listed. For questions specifically about a "
@@ -73,7 +78,13 @@ GENERATION_SYSTEM_PROMPT = (
 # raising it regenerates every stored answer — without this, improving a prompt
 # left every already-cached answer exactly as it was, which is how a fixed
 # hallucination kept being served from a row written before the fix.
-GENERATION_VERSION = "3"
+#
+# "4": blank candidate fields are listed as "not provided" instead of left out,
+# total experience is labelled as a total (structured_profile_block), and the
+# duration rule above says a total never answers a per-skill question. Cached
+# answers written under "3" can hold exactly what that fixed — an invented
+# sponsorship status or salary expectation — so they must not be reused.
+GENERATION_VERSION = "4"
 
 
 def answer_fingerprint(profile: Profile, job: JobModel) -> str:

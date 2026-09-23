@@ -89,7 +89,7 @@ async def test_generate_draft_answer_sends_structured_location_and_experience() 
     sent = mock_create.await_args.kwargs["messages"][1]["content"]
     assert "DETAILS THE CANDIDATE PROVIDED" in sent
     assert "Raichur, Karnataka, India" in sent
-    assert "Years of professional experience: 1" in sent
+    assert "Total professional experience, all roles combined: 1 year" in sent
 
 
 async def test_generate_draft_answer_handles_a_missing_location_gracefully() -> None:
@@ -199,17 +199,32 @@ def test_structured_block_lists_the_candidate_supplied_answers() -> None:
     assert "Currently holds another offer: no" in block
 
 
-def test_structured_block_omits_fields_the_candidate_left_blank() -> None:
-    """An absent field has to read as "not available" so the model refuses the
-    question. Listing all eight as "not provided" would bury the real ones.
+def test_a_field_left_blank_is_listed_as_not_provided() -> None:
+    """Blank fields used to be left out, on the theory that absence would read
+    as "not available". The draft-answer eval measured the opposite: asked for
+    a sponsorship status or an expected CTC the candidate never gave, the
+    generator answered on every run — "I do not require visa sponsorship",
+    "My expected CTC is 10 LPA". A field that visibly exists and is empty is a
+    fact to report; one that is missing is a hole to fill.
     """
     block = structured_profile_block(make_profile(notice_period="Immediately available"))
 
     assert "Immediately available" in block
-    assert "Current CTC" not in block
-    assert "Expected CTC" not in block
-    assert "Work authorization" not in block
-    assert "Currently holds another offer" not in block
+    assert "Current CTC: not provided" in block
+    assert "Expected CTC: not provided" in block
+    assert "Work authorization / visa sponsorship: not provided" in block
+    assert "Currently holds another offer: not provided" in block
+
+
+def test_total_experience_is_labelled_as_a_total() -> None:
+    """The bare "Years of professional experience: 1" was read as applying to
+    anything — "I have 1 year of experience with Python" on every run, for a
+    resume that gives no duration for Python.
+    """
+    assert "all roles combined: 1 year" in structured_profile_block(make_profile(years_experience=1))
+    assert "all roles combined: 2.5 years" in structured_profile_block(
+        make_profile(years_experience=2.5)
+    )
 
 
 def test_choice_prompt_treats_a_no_experience_option_as_answerable() -> None:
