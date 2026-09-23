@@ -41,6 +41,26 @@ a form.
 `playwright install chromium` is separate from `pip install`: pip brings the
 Python package, not the browser binary the form filler drives.
 
+## Evals
+
+`pytest` covers everything deterministic and never calls a model. What an LLM
+actually writes is measured separately, against labeled datasets in
+`backend/evals/datasets/`:
+
+```bash
+cd backend
+python -m evals.run_eval draft_answers --runs 5 --out before.json
+# ...change a prompt...
+python -m evals.run_eval draft_answers --runs 5 --out after.json
+```
+
+It calls the real model, so it needs `OPENAI_API_KEY` and costs a few cents a
+run — it is run by hand around prompt changes, not in CI. Each question is asked
+several times because temperature 0 is not deterministic in practice: a failure
+that shows up on half the runs looks clean on a single pass. `--rescore FILE`
+re-judges saved answers under the current rules without calling the model, which
+keeps a before/after honest when the rules themselves improve.
+
 ## Status
 
 Early scaffold — see MVP.md §8 for the current phase.

@@ -43,30 +43,42 @@ VERIFICATION_SYSTEM_PROMPT = (
 def structured_profile_block(profile: Profile) -> str:
     """The candidate's reliable, non-resume facts, for both prompts to read.
 
-    Only fields the candidate actually filled in are listed: an absent field
-    should read to the model as "not available" and produce an honest refusal,
-    which is exactly what omitting it does. Listing every field as "not
-    provided" would bury the ones that are.
+    Every field is listed, as "not provided" when the candidate left it blank.
+    Blank fields used to be left out, on the theory that absence would read to
+    the model as "not available". Measured by the draft-answer eval, it read as
+    a gap to fill: asked for a preferred work location or a visa-sponsorship
+    status the candidate never gave, the generator answered on every run — the
+    current city offered as the preference, and "I do not require visa
+    sponsorship" invented outright. A field that visibly exists and is empty is
+    a fact to report; one that is missing is a hole to fill.
     """
-    lines = [
-        f"Location: {profile.location or 'not provided'}",
-        f"Years of professional experience: {profile.years_experience:g}",
-    ]
-    optional = (
+    years = profile.years_experience
+    has_offer = None
+    if profile.has_offer_in_hand is not None:
+        has_offer = "yes" if profile.has_offer_in_hand else "no"
+
+    fields = (
+        ("Location", profile.location),
+        # A total, and labelled as one. The bare "Years of professional
+        # experience: 1" was read as applying to anything, and produced "I have
+        # 1 year of experience with Python" on every run for a resume that
+        # gives no duration for Python.
+        (
+            "Total professional experience, all roles combined",
+            f"{years:g} year{'' if years == 1 else 's'}",
+        ),
         ("Notice period / when they can start", profile.notice_period),
         ("Current CTC", profile.current_ctc),
         ("Expected CTC", profile.expected_ctc),
         ("Preferred work locations", profile.preferred_locations),
-        ("Work authorization", profile.work_authorization),
+        # Named for the question it answers: forms ask about sponsorship far more
+        # often than they say "work authorization".
+        ("Work authorization / visa sponsorship", profile.work_authorization),
         ("LinkedIn profile", profile.linkedin_url),
         ("Portfolio / GitHub / personal site", profile.portfolio_url),
+        ("Currently holds another offer", has_offer),
     )
-    lines.extend(f"{label}: {value}" for label, value in optional if value)
-    if profile.has_offer_in_hand is not None:
-        answer = "yes" if profile.has_offer_in_hand else "no"
-        lines.append(f"Currently holds another offer: {answer}")
-
-    body = "\n".join(lines)
+    body = "\n".join(f"{label}: {value or 'not provided'}" for label, value in fields)
     # Worded so it still reads as English if the model echoes it. The previous
     # heading did not: an answer told an employer that a figure was "not
     # included in my resume or structured profile data", which is this system's
