@@ -12,6 +12,8 @@ from app.automation.base import (
     FillResult,
     FillStatus,
     FormContext,
+    clear_text_field,
+    confirm_file_fill,
     has_captcha,
     is_consent_question,
 )
@@ -103,10 +105,12 @@ class GreenhouseFormAdapter(ATSAdapter):
         # Every plain text value written, kept so it can be read back at the end
         # — see _confirm_text_fills for why believing .fill() is not enough.
         text_fills: list[tuple[str, Locator, str]] = []
+        file_fills: list[tuple[str, Locator, dict]] = []
 
-        await self._fill_core_fields(form, page, payload, filled, skipped, text_fills)
+        await self._fill_core_fields(form, page, payload, filled, skipped, text_fills, file_fills)
         await self._fill_custom_questions(form, page, payload, filled, skipped, text_fills)
         await self._confirm_text_fills(page, text_fills, filled, skipped)
+        await confirm_file_fill(page, form, file_fills, filled, skipped, REFILL_SETTLE_MS)
 
         # Checked after filling, not before: a fully-filled form is what makes
         # the pending_captcha review screen useful — the human should see every
@@ -180,7 +184,9 @@ class GreenhouseFormAdapter(ATSAdapter):
             if await self._value_holds(locator, value):
                 continue
 
-            # Never leave a claim standing that the form disagrees with.
+            # Never leave a claim standing that the form disagrees with — nor
+            # the form holding a fragment of one. See clear_text_field.
+            await clear_text_field(locator)
             filled.pop(key, None)
             skipped.append(key)
 
@@ -206,6 +212,7 @@ class GreenhouseFormAdapter(ATSAdapter):
         filled: dict[str, str],
         skipped: list[str],
         text_fills: list[tuple[str, Locator, str]],
+        file_fills: list[tuple[str, Locator, dict]],
     ) -> None:
         for field, selector in CORE_FIELD_SELECTORS.items():
             value = payload.get(field)
@@ -231,14 +238,16 @@ class GreenhouseFormAdapter(ATSAdapter):
         resume_bytes = payload.get("resume_bytes")
         resume_field = form.locator("#resume")
         if resume_bytes and await resume_field.count() > 0:
-            await resume_field.set_input_files(
-                {
-                    "name": payload.get("resume_filename") or "resume.pdf",
-                    "mimeType": "application/pdf",
-                    "buffer": resume_bytes,
-                }
-            )
-            filled["#resume"] = payload.get("resume_filename") or "resume.pdf"
+            resume_file = {
+                "name": payload.get("resume_filename") or "resume.pdf",
+                "mimeType": "application/pdf",
+                "buffer": resume_bytes,
+            }
+            await resume_field.set_input_files(resume_file)
+            filled["#resume"] = resume_file["name"]
+            # Read back with everything else — a late re-render empties a file
+            # input exactly as it empties a text one. See confirm_file_fill.
+            file_fills.append(("#resume", resume_field, resume_file))
         else:
             skipped.append("#resume")
 

@@ -10,6 +10,7 @@ from app.models.application_outcome import ApplicationOutcome
 from app.models.base import Base
 from app.models.cover_letter import CoverLetter
 from app.models.draft_answer import DraftAnswer
+from app.models.fill_attempt import FillAttempt
 from app.models.job import EMBEDDING_DIM
 from app.models.job import Job as JobModel
 from app.models.profile import Profile, ProfileProject
@@ -52,6 +53,7 @@ async def db(create_test_schema):
         # anticipated in advance — applying the same lesson proactively for each
         # new dependent table since).
         await session.execute(delete(ApplicationOutcome))
+        await session.execute(delete(FillAttempt))
         await session.execute(delete(DraftAnswer))
         await session.execute(delete(Application))
         await session.execute(delete(CoverLetter))

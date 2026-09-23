@@ -211,6 +211,14 @@ export type VariantPerformance = {
   interviews: number;
 };
 
+/** One field the filler keeps leaving for a human — the tool's own backlog,
+ * measured from real runs rather than guessed at. */
+export type SkippedField = {
+  field: string;
+  runs: number;
+  applications: number;
+};
+
 export type AnalyticsSummary = {
   started: number;
   submitted: number;
@@ -220,6 +228,8 @@ export type AnalyticsSummary = {
   by_state: Record<string, number>;
   by_outcome: Record<string, number>;
   variants: VariantPerformance[];
+  fill_runs: number;
+  skipped_fields: SkippedField[];
 };
 
 /** What came back after an application went out. Recorded as a log, not a
@@ -245,12 +255,25 @@ export type ApplicationOutcomeOut = {
 
 export type FillFormStatus = "filled" | "captcha_required" | "form_not_found";
 
-export type FillFormResultOut = {
+/** One recorded run of the form-filler. Kept rather than overwritten: a fill
+ * retried after a human clears a CAPTCHA is a second attempt, and what changed
+ * between the two is the useful part. */
+export type FillAttemptOut = {
+  id: number;
+  application_id: number;
   status: FillFormStatus;
   filled_fields: Record<string, string>;
   skipped_fields: string[];
-  screenshot_base64: string | null;
+  duration_ms: number;
+  created_at: string;
+  // The screenshot is fetched from its own endpoint rather than inlined here —
+  // full-page PNGs would be megabytes of base64 per attempt in this response.
+  has_screenshot: boolean;
 };
+
+export function fillScreenshotUrl(applicationId: number, attemptId: number): string {
+  return `${API_BASE_URL}/api/v1/applications/${applicationId}/fill-attempts/${attemptId}/screenshot`;
+}
 
 export type ResumeVariantOut = {
   id: number;

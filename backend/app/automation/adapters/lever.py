@@ -9,6 +9,8 @@ from app.automation.base import (
     ATSAdapter,
     FillResult,
     FillStatus,
+    clear_text_field,
+    confirm_file_fill,
     has_captcha,
     is_consent_question,
 )
@@ -77,10 +79,12 @@ class LeverFormAdapter(ATSAdapter):
         filled: dict[str, str] = {}
         skipped: list[str] = []
         text_fills: list[tuple[str, Locator, str]] = []
+        file_fills: list[tuple[str, Locator, dict]] = []
 
-        await self._fill_core_fields(page, payload, filled, skipped, text_fills)
+        await self._fill_core_fields(page, payload, filled, skipped, text_fills, file_fills)
         await self._fill_custom_questions(page, payload, filled, skipped, text_fills)
         await self._confirm_text_fills(page, text_fills, filled, skipped)
+        await confirm_file_fill(page, page, file_fills, filled, skipped, REFILL_SETTLE_MS)
 
         status: FillStatus = "captcha_required" if await has_captcha(page) else "filled"
         screenshot = await page.screenshot(full_page=True)
@@ -115,6 +119,7 @@ class LeverFormAdapter(ATSAdapter):
         filled: dict[str, str],
         skipped: list[str],
         text_fills: list[tuple[str, Locator, str]],
+        file_fills: list[tuple[str, Locator, dict]],
     ) -> None:
         # One field for the whole name, unlike Greenhouse's split pair.
         full_name = " ".join(
@@ -138,14 +143,15 @@ class LeverFormAdapter(ATSAdapter):
         resume_bytes = payload.get("resume_bytes")
         resume_field = page.locator('input[type="file"][name="resume"]')
         if resume_bytes and await resume_field.count() > 0:
-            await resume_field.set_input_files(
-                {
-                    "name": payload.get("resume_filename") or "resume.pdf",
-                    "mimeType": "application/pdf",
-                    "buffer": resume_bytes,
-                }
-            )
-            filled["resume"] = payload.get("resume_filename") or "resume.pdf"
+            resume_file = {
+                "name": payload.get("resume_filename") or "resume.pdf",
+                "mimeType": "application/pdf",
+                "buffer": resume_bytes,
+            }
+            await resume_field.set_input_files(resume_file)
+            filled["resume"] = resume_file["name"]
+            # Read back with everything else — see confirm_file_fill.
+            file_fills.append(("resume", resume_field, resume_file))
         else:
             skipped.append("resume")
 
@@ -256,6 +262,9 @@ class LeverFormAdapter(ATSAdapter):
             if await self._value_holds(locator, value):
                 continue
 
+            # Nothing half-written is left behind under a "skipped" label —
+            # see clear_text_field.
+            await clear_text_field(locator)
             filled.pop(key, None)
             skipped.append(key)
 

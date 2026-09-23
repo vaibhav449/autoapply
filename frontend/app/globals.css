@@ -1447,6 +1447,24 @@ button[type="button"]:hover {
   word-break: break-word;
 }
 
+/* Earlier runs, collapsed by default: the latest attempt is the one being
+   reviewed, and the rest are there to compare against, not to scroll past. */
+.fill-history {
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+  margin-top: 1.1rem;
+}
+
+.fill-history summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.fill-history .fill-field-list {
+  margin-top: 0.9rem;
+}
+
 pre {
   white-space: pre-wrap;
   word-break: break-word;

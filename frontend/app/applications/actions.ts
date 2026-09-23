@@ -8,7 +8,7 @@ import {
   type ApplicationOut,
   type ApplicationState,
   type DraftAnswerCreateInput,
-  type FillFormResultOut,
+  type FillAttemptOut,
   type OutcomeKind,
 } from "@/lib/api";
 
@@ -105,9 +105,8 @@ export async function updateDraftAnswer(
 }
 
 // Called directly from a client component, not through a <form action> — the
-// real, per-run result (filled fields, a fresh screenshot) only makes sense
-// rendered inline, and a redirect back to this same page would throw it away
-// rather than display it.
-export async function fillApplicationForm(applicationId: number): Promise<FillFormResultOut> {
-  return apiPost<FillFormResultOut>(`/api/v1/applications/${applicationId}/fill-form`, {});
+// panel swaps in the new attempt the moment it lands, and a redirect back to
+// this same page would make a long-running fill look like a page flash.
+export async function fillApplicationForm(applicationId: number): Promise<FillAttemptOut> {
+  return apiPost<FillAttemptOut>(`/api/v1/applications/${applicationId}/fill-form`, {});
 }

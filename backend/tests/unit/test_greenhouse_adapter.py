@@ -381,6 +381,137 @@ async def test_a_field_that_will_not_hold_a_value_is_reported_skipped(page) -> N
     assert "#first_name" in result["skipped_fields"]
 
 
+async def test_a_truncated_answer_is_cleared_rather_than_left_half_written(page) -> None:
+    """Found live on a Capco question with maxlength=255 answered in 301
+    characters. The browser keeps the first 255, so the read-back disagrees and
+    the field is demoted to skipped — but the form was still showing half a
+    sentence, ending mid-word, that a reviewer trusting the "skipped" label
+    would have submitted without ever looking at it. A fragment is worse than
+    nothing: nothing is at least what "skipped" claims.
+    """
+    limit = 20
+    await page.set_content(
+        f"""
+        <html><body>
+          <form>
+            <label for="first_name">First Name*</label><input id="first_name" type="text">
+            <label for="question_1">How many years with React?*</label>
+            <input id="question_1" type="text" maxlength="{limit}">
+          </form>
+        </body></html>
+        """
+    )
+    long_answer = "x" * (limit + 40)
+
+    adapter = GreenhouseFormAdapter()
+    result = await adapter._fill_page(
+        page, make_payload(answer_question=lambda question: _answer(long_answer))
+    )
+
+    question = "How many years with React?"
+    assert question in result["skipped_fields"]
+    assert question not in result["filled_fields"]
+    # The claim and the form now agree: nothing there.
+    assert await page.locator("#question_1").input_value() == ""
+
+
+async def _answer(text: str) -> str:
+    return text
+
+
+async def test_a_resume_the_form_drops_stops_being_claimed(page) -> None:
+    """Found live on a Capco posting: the run reported the resume attached
+    while the form was still showing its Attach / Dropbox / Google Drive
+    buttons — set_input_files() had succeeded and a later re-render emptied the
+    input again, exactly the way one empties a text field. The resume is the
+    field a reviewer is least likely to re-check by hand, so a false claim
+    about it is the most expensive one this can make.
+    """
+    await page.set_content(
+        """
+        <html><body>
+          <form>
+            <label for="first_name">First Name*</label><input id="first_name" type="text">
+            <input id="resume" type="file">
+          </form>
+          <script>
+            // empties the input on every attach, like a re-render that resets
+            // the control after the write has already reported success
+            const el = document.getElementById('resume');
+            window.__attaches = 0;
+            el.addEventListener('change', () => { window.__attaches += 1; el.value = ''; });
+          </script>
+        </body></html>
+        """
+    )
+
+    adapter = GreenhouseFormAdapter()
+    result = await adapter._fill_page(page, make_payload())
+
+    # It really was attempted twice — written, found missing, re-attached.
+    assert await page.evaluate("window.__attaches") == 2
+    assert "#resume" not in result["filled_fields"]
+    assert "#resume" in result["skipped_fields"]
+
+
+async def test_an_uploader_that_swallows_the_input_still_counts_as_attached(page) -> None:
+    """What Greenhouse actually does once its uploader hydrates, measured live:
+    it takes the file, removes the <input> from the DOM entirely, and renders
+    the filename as a chip instead. Judging that by el.files alone reports a
+    missing resume over a form that visibly has one — and waits out the full
+    locator timeout on the vanished element to do it.
+    """
+    await page.set_content(
+        """
+        <html><body>
+          <form>
+            <label for="first_name">First Name*</label><input id="first_name" type="text">
+            <input id="resume" type="file">
+          </form>
+          <script>
+            const el = document.getElementById('resume');
+            el.addEventListener('change', () => {
+              const name = el.files[0].name;
+              const chip = document.createElement('span');
+              chip.textContent = name;
+              el.parentNode.appendChild(chip);
+              el.remove();            // the control is gone, the file is kept
+            });
+          </script>
+        </body></html>
+        """
+    )
+
+    adapter = GreenhouseFormAdapter()
+    result = await adapter._fill_page(page, make_payload())
+
+    assert await page.locator("#resume").count() == 0  # really did vanish
+    assert result["filled_fields"]["#resume"] == "ada-resume.pdf"
+    assert "#resume" not in result["skipped_fields"]
+
+
+async def test_a_resume_that_sticks_is_still_reported_filled(page) -> None:
+    """The other side of the sweep: a form that keeps the file must not have it
+    demoted, or every fill would report a missing resume.
+    """
+    await page.set_content(
+        """
+        <html><body>
+          <form>
+            <label for="first_name">First Name*</label><input id="first_name" type="text">
+            <input id="resume" type="file">
+          </form>
+        </body></html>
+        """
+    )
+
+    adapter = GreenhouseFormAdapter()
+    result = await adapter._fill_page(page, make_payload())
+
+    assert result["filled_fields"]["#resume"] == "ada-resume.pdf"
+    assert "#resume" not in result["skipped_fields"]
+
+
 async def test_form_not_found_when_neither_the_form_nor_an_apply_trigger_exists(page) -> None:
     await page.set_content("<html><body><h1>404</h1></body></html>")
     adapter = GreenhouseFormAdapter()
