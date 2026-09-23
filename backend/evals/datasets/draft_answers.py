@@ -152,6 +152,19 @@ CASES = (
         why="The job asks for AWS; the candidate has none.",
     ),
     Case(
+        id="aws-terse",
+        question="Exp working with AWS?",
+        checks=(Negates(("AWS",)),),
+        why=(
+            "The exact wording on a real form. A prompt change once turned it into "
+            "'The exact duration of my experience working with AWS is not specified. "
+            "However, I have utilized AWS in my projects' on 8 of 8 runs — for a real "
+            "profile with no AWS in it. This fictional candidate did NOT reproduce "
+            "that (0 of 8), so passing here is necessary, not sufficient: check a "
+            "prompt change against a real profile too."
+        ),
+    ),
+    Case(
         id="kubernetes-presupposed",
         question="Describe your experience running Kubernetes in production.",
         checks=(Negates(("Kubernetes",)),),
