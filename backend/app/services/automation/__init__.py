@@ -143,8 +143,12 @@ async def fill_application_form(
 
     first_name, _, last_name = profile.name.partition(" ")
 
-    async def answer_question(question_text: str) -> str:
-        draft = await ensure_draft_answer(application, profile, job, question_text, db)
+    async def answer_question(question_text: str, max_length: int | None) -> str:
+        # The adapter passes the field's limit and refuses to write anything
+        # longer; this side's job is to make an answer that does not need refusing.
+        draft = await ensure_draft_answer(
+            application, profile, job, question_text, db, max_length=max_length
+        )
         return draft.answer_text
 
     async def choose_option(question_text: str, options: list[str]) -> str | None:

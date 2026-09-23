@@ -11,6 +11,7 @@ from app.automation.base import (
     FillStatus,
     clear_text_field,
     confirm_file_fill,
+    fill_text_answer,
     has_captcha,
     is_consent_question,
 )
@@ -191,10 +192,9 @@ class LeverFormAdapter(ATSAdapter):
                     filled[question_text] = choice
                 continue
 
-            answer = await answer_question(question_text)
-            await field.fill(answer)
-            filled[question_text] = answer
-            text_fills.append((question_text, field, answer))
+            await fill_text_answer(
+                field, question_text, answer_question, filled, skipped, text_fills
+            )
 
     async def _question_text(self, field: Locator) -> str | None:
         """Lever renders the question above its control rather than in a label

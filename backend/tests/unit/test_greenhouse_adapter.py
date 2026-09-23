@@ -56,7 +56,7 @@ async def page():
         await browser.close()
 
 
-async def fake_answer(question: str) -> str:
+async def fake_answer(question: str, max_length: int | None) -> str:
     return f"ANSWER[{question}]"
 
 
@@ -183,7 +183,7 @@ async def test_answers_every_real_free_text_question_on_the_fixture(page) -> Non
     adapter = GreenhouseFormAdapter()
     asked: list[str] = []
 
-    async def recording_answer(question: str) -> str:
+    async def recording_answer(question: str, max_length: int | None) -> str:
         asked.append(question)
         return f"ANSWER[{question}]"
 
@@ -206,7 +206,7 @@ async def test_combobox_questions_are_never_answered_as_free_text(page) -> None:
     adapter = GreenhouseFormAdapter()
     asked: list[str] = []
 
-    async def recording_answer(question: str) -> str:
+    async def recording_answer(question: str, max_length: int | None) -> str:
         asked.append(question)
         return f"ANSWER[{question}]"
 
@@ -381,13 +381,19 @@ async def test_a_field_that_will_not_hold_a_value_is_reported_skipped(page) -> N
     assert "#first_name" in result["skipped_fields"]
 
 
-async def test_a_truncated_answer_is_cleared_rather_than_left_half_written(page) -> None:
-    """Found live on a Capco question with maxlength=255 answered in 301
-    characters. The browser keeps the first 255, so the read-back disagrees and
-    the field is demoted to skipped — but the form was still showing half a
-    sentence, ending mid-word, that a reviewer trusting the "skipped" label
-    would have submitted without ever looking at it. A fragment is worse than
-    nothing: nothing is at least what "skipped" claims.
+async def test_an_answer_cut_short_by_the_page_is_cleared_rather_than_left_half_written(
+    page,
+) -> None:
+    """The safety net under the limit check below. Found live on a Capco
+    question answered in 301 characters: the browser kept the first 255, the
+    read-back demoted the field to skipped — and left half a sentence, ending
+    mid-word, that a reviewer trusting the "skipped" label would have
+    submitted. A fragment is worse than nothing: nothing is at least what
+    "skipped" claims.
+
+    A declared maxlength is now refused before anything is written, so this
+    uses the case that check cannot see: a limit enforced by script, with no
+    attribute to read.
     """
     limit = 20
     await page.set_content(
@@ -396,8 +402,12 @@ async def test_a_truncated_answer_is_cleared_rather_than_left_half_written(page)
           <form>
             <label for="first_name">First Name*</label><input id="first_name" type="text">
             <label for="question_1">How many years with React?*</label>
-            <input id="question_1" type="text" maxlength="{limit}">
+            <input id="question_1" type="text">
           </form>
+          <script>
+            const el = document.getElementById('question_1');
+            el.addEventListener('input', () => {{ el.value = el.value.slice(0, {limit}); }});
+          </script>
         </body></html>
         """
     )
@@ -405,7 +415,7 @@ async def test_a_truncated_answer_is_cleared_rather_than_left_half_written(page)
 
     adapter = GreenhouseFormAdapter()
     result = await adapter._fill_page(
-        page, make_payload(answer_question=lambda question: _answer(long_answer))
+        page, make_payload(answer_question=lambda question, max_length: _answer(long_answer))
     )
 
     question = "How many years with React?"
@@ -413,6 +423,75 @@ async def test_a_truncated_answer_is_cleared_rather_than_left_half_written(page)
     assert question not in result["filled_fields"]
     # The claim and the form now agree: nothing there.
     assert await page.locator("#question_1").input_value() == ""
+
+
+LIMITED_FIELD_STUB = """
+<html><body>
+  <form>
+    <label for="first_name">First Name*</label><input id="first_name" type="text">
+    <label for="question_1">How many years with React?*</label>
+    <input id="question_1" type="text" maxlength="20">
+    <label for="question_2">Tell us about yourself*</label>
+    <textarea id="question_2"></textarea>
+  </form>
+  <script>
+    window.__writes = 0;
+    document.getElementById('question_1')
+      .addEventListener('input', () => { window.__writes += 1; });
+  </script>
+</body></html>
+"""
+
+
+async def test_each_answer_is_asked_for_within_its_fields_own_limit(page) -> None:
+    """Measured across six live Greenhouse postings: every single-line question
+    input carries maxlength=255, while the answers generated for them run past
+    that about one time in ten. The limit is handed to whoever writes the
+    answer, so it can be written to fit instead of cut off.
+    """
+    await page.set_content(LIMITED_FIELD_STUB)
+    offered: dict[str, int | None] = {}
+
+    async def recording_answer(question: str, max_length: int | None) -> str:
+        offered[question] = max_length
+        return "short"
+
+    adapter = GreenhouseFormAdapter()
+    await adapter._fill_page(page, make_payload(answer_question=recording_answer))
+
+    assert offered == {"How many years with React?": 20, "Tell us about yourself": None}
+
+
+async def test_an_answer_that_still_does_not_fit_is_never_written(page) -> None:
+    """Whatever the caller hands back, nothing longer than the field holds is
+    typed into it — the browser would keep the first part and drop the rest.
+    """
+    await page.set_content(LIMITED_FIELD_STUB)
+
+    async def too_long(question: str, max_length: int | None) -> str:
+        return "x" * 60
+
+    adapter = GreenhouseFormAdapter()
+    result = await adapter._fill_page(page, make_payload(answer_question=too_long))
+
+    question = "How many years with React?"
+    assert question in result["skipped_fields"]
+    assert question not in result["filled_fields"]
+    assert await page.evaluate("window.__writes") == 0
+    assert await page.locator("#question_1").input_value() == ""
+
+
+async def test_an_answer_that_fits_is_written_whole(page) -> None:
+    await page.set_content(LIMITED_FIELD_STUB)
+
+    async def exactly_fits(question: str, max_length: int | None) -> str:
+        return "y" * (max_length or 30)
+
+    adapter = GreenhouseFormAdapter()
+    result = await adapter._fill_page(page, make_payload(answer_question=exactly_fits))
+
+    assert result["filled_fields"]["How many years with React?"] == "y" * 20
+    assert await page.locator("#question_1").input_value() == "y" * 20
 
 
 async def _answer(text: str) -> str:
@@ -640,7 +719,7 @@ async def test_a_consent_question_is_skipped_even_on_a_plain_text_field(page) ->
     adapter = GreenhouseFormAdapter()
     asked: list[str] = []
 
-    async def recording_answer(question: str) -> str:
+    async def recording_answer(question: str, max_length: int | None) -> str:
         asked.append(question)
         return "should never be called"
 
