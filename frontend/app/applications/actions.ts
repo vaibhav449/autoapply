@@ -8,6 +8,7 @@ import {
   type ApplicationOut,
   type ApplicationState,
   type DraftAnswerCreateInput,
+  type DraftAnswerOut,
   type FillAttemptOut,
   type OutcomeKind,
 } from "@/lib/api";
@@ -56,7 +57,16 @@ export async function createDraftAnswer(
 
   const payload: DraftAnswerCreateInput = { question_text: questionText };
 
-  await apiPost(`/api/v1/applications/${applicationId}/draft-answers`, payload);
+  // null: the question asks for something only the candidate can supply (an
+  // expected CTC, say) and their profile leaves it blank. The page explains
+  // that and points at the profile instead of showing a made-up placeholder.
+  const answer = await apiPost<DraftAnswerOut | null>(
+    `/api/v1/applications/${applicationId}/draft-answers`,
+    payload,
+  );
+  if (answer === null) {
+    redirect(`/applications/${applicationId}?yours=${encodeURIComponent(questionText)}`);
+  }
 
   // Redirect to the same page rather than revalidatePath: forces the same fresh
   // server-side fetch every other mutation in this app relies on, no new pattern.

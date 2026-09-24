@@ -41,7 +41,9 @@ class FillPayload(TypedDict):
     # precomputed into the payload the way the core fields can. The second
     # argument is the field's own character limit (None when it sets none), so
     # the answer can be written to fit rather than cut off by the browser.
-    answer_question: Callable[[str, int | None], Awaitable[str]]
+    # Returns None for a question only the candidate can answer, left blank on
+    # their profile — the field is then left for them, like a declined dropdown.
+    answer_question: Callable[[str, int | None], Awaitable[str | None]]
     # Same idea for dropdowns, but the caller also gets the option list this
     # specific form offers, and returns one of them (or None to leave it for the
     # human). Separate from answer_question because a dropdown cannot accept
@@ -113,7 +115,7 @@ async def max_length_of(field: Locator) -> int | None:
 async def fill_text_answer(
     field: Locator,
     question_text: str,
-    answer_question: Callable[[str, int | None], Awaitable[str]],
+    answer_question: Callable[[str, int | None], Awaitable[str | None]],
     filled: dict[str, str],
     skipped: list[str],
     text_fills: list[tuple[str, Locator, str]],
@@ -125,10 +127,14 @@ async def fill_text_answer(
     at all. Writing it would let the browser cut it off mid-sentence, and the
     read-back sweep would then have to notice and undo that after the fact.
     Every adapter answers free text the same way, so it lives here once.
+
+    No answer at all means the question is the candidate's to answer — their
+    notice period, say, left blank on the profile. The field is left empty and
+    reported skipped rather than filled with a sentence about the gap.
     """
     limit = await max_length_of(field)
     answer = await answer_question(question_text, limit)
-    if limit is not None and len(answer) > limit:
+    if answer is None or (limit is not None and len(answer) > limit):
         skipped.append(question_text)
         return
 

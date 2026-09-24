@@ -1,4 +1,5 @@
 import hashlib
+import re
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,13 +40,22 @@ GENERATION_SYSTEM_PROMPT = (
     "formal notice period, you may note that an internship doesn't carry the same "
     "notice obligations as full-time employment, but do not claim to be unemployed "
     "while an internship is active.\n\n"
-    "Some questions ask about things a resume cannot answer — notice period, "
-    "salary expectations, work authorization, another offer in hand, where the "
-    "candidate wants to work. The candidate supplies these separately in the "
-    "structured data above; when it answers the question, use it directly and "
-    "state it plainly.\n\n"
-    "Whenever the candidate's material — resume, projects and structured data "
-    "together — does not address what the question asks, write a short honest "
+    "Some questions ask about things a resume cannot answer — where the candidate "
+    "is based, notice period, current or expected salary, work authorization or "
+    "visa sponsorship, another offer in hand, where they want to work, a profile "
+    "link. These come only from the DETAILS THE CANDIDATE PROVIDED block. When "
+    "the detail a question asks about is given there, state it plainly. Reply "
+    "with exactly NOT_PROVIDED, and nothing else, only when a question asks for "
+    "one of these details and that detail's own line in the block reads not "
+    "provided: only the candidate can answer that question, and a sentence "
+    "about the gap is not an answer an employer can use.\n\n"
+    "A question about the candidate's experience, skills, tools or domains is never "
+    "answered with NOT_PROVIDED — and on these forms \"exp\" is short for "
+    "experience, not for anything expected. The resume and projects are the record of those, "
+    "so something they do not show is something the candidate does not have, and "
+    "the answer says so plainly.\n\n"
+    "For anything else the candidate's material — resume, projects and structured "
+    "data together — does not address, write a short honest "
     "placeholder saying so instead of inventing a plausible answer. Never claim "
     "experience with a technology, tool, platform or domain that does not appear "
     "in that material, and never invent a figure, date or status. Naming a "
@@ -86,7 +96,34 @@ GENERATION_SYSTEM_PROMPT = (
 # specified. However, I have utilized AWS in my projects" 8 times out of 8,
 # against 0 of 8 with the rule as it was. The rule is back to that; anything
 # generated under "4" may carry the invented claim and must not be reused.
-GENERATION_VERSION = "5"
+#
+# "6": a detail only the candidate can supply, left blank, is answered with
+# NOT_PROVIDED instead of a sentence about the gap — "Current CTC is not
+# provided." typed into a real form. Rows written under "5" can be exactly that.
+GENERATION_VERSION = "6"
+
+# The generator's reply when a question asks for something only the candidate
+# can supply and they have not (see GENERATION_SYSTEM_PROMPT). The question is
+# then left for them, the way a declined dropdown already is.
+NOT_PROVIDED = "NOT_PROVIDED"
+
+
+# A reply that is nothing but a detail's absence: "not provided", "Current CTC
+# is not provided.", "Expected CTC: not provided". The marker's meaning without
+# its spelling — the eval caught the model writing exactly these once the prompt
+# described the block's "not provided" lines, and each would have been typed
+# into a form as-is. Whole-reply only: "not provided by my current employer" is
+# a sentence with something to say, and is left alone.
+_ONLY_AN_ABSENCE = re.compile(
+    r"\W*(?:[\w /]{0,60}?(?:\s+is|:)\s*)?not[\s_]+provided\W*", re.IGNORECASE
+)
+
+
+def leaves_it_to_the_candidate(answer: str) -> bool:
+    """The marker anywhere in the reply — one wrapped in a sentence must still
+    never be typed into a form — or a reply that only states the absence.
+    """
+    return NOT_PROVIDED in answer or _ONLY_AN_ABSENCE.fullmatch(answer.strip()) is not None
 
 
 def answer_fingerprint(profile: Profile, job: JobModel) -> str:
@@ -233,6 +270,13 @@ async def ensure_draft_option(
 
     choice = await choose_draft_option(profile, job, question_text, options)
     if choice is None:
+        # A machine-written pick left over from an older prompt goes too, or the
+        # application page keeps showing it as the answer. Seen live: "Offer in
+        # hand: No" still listed there long after current rules stopped choosing
+        # anything. (A person's own answer never gets here — it is reusable.)
+        if existing is not None:
+            await db.delete(existing)
+            await db.commit()
         return None
 
     if existing is not None:
@@ -311,7 +355,8 @@ async def generate_draft_answer(
     ]
     content = await _complete(messages)
 
-    if max_length is not None and len(content) > max_length:
+    too_long = max_length is not None and len(content) > max_length
+    if too_long and not leaves_it_to_the_candidate(content):
         target = int(max_length * LENGTH_TARGET_RATIO)
         content = await _complete(
             [
@@ -340,7 +385,7 @@ async def ensure_draft_answer(
     question_text: str,
     db: AsyncSession,
     max_length: int | None = None,
-) -> DraftAnswer:
+) -> DraftAnswer | None:
     """Generate once per (application, question), and again whenever what it was
     generated from has moved on — or when the field it is going into cannot hold
     it (max_length, when the caller knows the field).
@@ -350,6 +395,11 @@ async def ensure_draft_answer(
     stayed exactly as it was, because a plain cache hit never looks at whether
     the thing that produced it still exists. An answer a person edited is the
     one exception — that is theirs, and no prompt change reclaims it.
+
+    None means the question asks for something only the candidate can supply,
+    and their profile leaves it blank. Nothing is stored for it — a row would
+    appear on the application page as an answer — and nothing is cached, so
+    filling in the profile takes effect on the very next fill.
     """
     fingerprint = answer_fingerprint(profile, job)
     result = await db.execute(
@@ -363,6 +413,15 @@ async def ensure_draft_answer(
         return existing
 
     content = await generate_draft_answer(profile, job, question_text, max_length)
+    if leaves_it_to_the_candidate(content):
+        # Only a machine-written row can be here (a person's is reusable), and
+        # one written under an older prompt would otherwise keep showing on the
+        # page as the answer.
+        if existing is not None:
+            await db.delete(existing)
+            await db.commit()
+        return None
+
     # A draft answer, unlike a cover letter, is often pasted into a form field
     # near-verbatim rather than read and rewritten first — that raises the cost of
     # an unflagged hallucination, so this artifact gets the verification pass.

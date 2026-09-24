@@ -27,9 +27,12 @@ from dataclasses import asdict, dataclass
 
 from app.models.job import Job as JobModel
 from app.models.profile import Profile
-from app.services.tailoring.draft_answer import generate_draft_answer
+from app.services.tailoring.draft_answer import (
+    generate_draft_answer,
+    leaves_it_to_the_candidate,
+)
 from app.services.tailoring.grounding import grounding_source, verify_grounding
-from evals.checks import EVERY_ANSWER, FABRICATION, CheckResult, Fits
+from evals.checks import EVERY_ANSWER, FABRICATION, CheckResult, Fits, LeftForCandidate
 from evals.datasets.draft_answers import CANDIDATE, CASES, JOB, Case
 
 
@@ -52,7 +55,7 @@ class Sample:
 
 
 def _checks_for(case: Case) -> list:
-    checks = [*case.checks, *EVERY_ANSWER]
+    checks = [*case.checks, *EVERY_ANSWER, LeftForCandidate(case.left_for_candidate)]
     if case.max_length is not None:
         checks.append(Fits(case.max_length))
     return checks
@@ -63,9 +66,14 @@ async def _sample(
 ) -> Sample:
     async with gate:
         answer = await generate_draft_answer(profile, job, case.question, case.max_length)
-        verdict = await verify_grounding(answer, grounding_source(profile))
+        # Handed back to the candidate, the pipeline stores nothing and checks
+        # nothing — mirrored here, so the grounding check's figures cover only
+        # answers that would actually reach a reviewer.
+        flagged = []
+        if not leaves_it_to_the_candidate(answer):
+            flagged = (await verify_grounding(answer, grounding_source(profile))).unverified_claims
     results = [check.evaluate(answer) for check in _checks_for(case)]
-    return Sample(case.id, run, answer, results, verdict.unverified_claims)
+    return Sample(case.id, run, answer, results, flagged)
 
 
 def _clip(text: str, width: int = 90) -> str:

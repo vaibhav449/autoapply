@@ -728,3 +728,21 @@ async def test_a_consent_question_is_skipped_even_on_a_plain_text_field(page) ->
     assert asked == []
     assert "I acknowledge the Company Privacy Notice" in result["skipped_fields"]
     assert await page.locator("#question_1").input_value() == ""
+
+
+async def test_a_question_handed_back_to_the_candidate_is_never_written(page) -> None:
+    """No answer means the question is the candidate's own — a notice period
+    left blank on their profile. The field stays empty and is reported
+    skipped, instead of holding a sentence about the gap."""
+    await page.set_content(LIMITED_FIELD_STUB)
+
+    async def theirs_to_answer(question: str, max_length: int | None) -> str | None:
+        return None
+
+    adapter = GreenhouseFormAdapter()
+    result = await adapter._fill_page(page, make_payload(answer_question=theirs_to_answer))
+
+    question = "How many years with React?"
+    assert question in result["skipped_fields"]
+    assert question not in result["filled_fields"]
+    assert await page.evaluate("window.__writes") == 0

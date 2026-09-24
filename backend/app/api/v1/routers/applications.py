@@ -150,10 +150,15 @@ async def transition_application(
     return application
 
 
-@router.post("/{application_id}/draft-answers", response_model=DraftAnswerOut)
+@router.post("/{application_id}/draft-answers", response_model=DraftAnswerOut | None)
 async def create_draft_answer(
     application_id: int, payload: DraftAnswerCreate, db: AsyncSession = Depends(get_db)
-) -> DraftAnswer:
+) -> DraftAnswer | None:
+    """null, rather than an answer, when the question asks for something only
+    the candidate can supply and their profile leaves blank — their expected
+    CTC, say. Not an error: the honest result of asking is "that's yours to
+    answer", and the page says so and points at the profile.
+    """
     application = await _get_application_or_404(application_id, db)
     profile, job = await _load_profile_and_job(application, db)
 
