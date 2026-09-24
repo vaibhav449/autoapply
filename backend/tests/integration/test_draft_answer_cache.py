@@ -254,3 +254,87 @@ async def test_a_person_written_answer_is_never_rewritten_to_fit(db, client) -> 
 
     gen.assert_not_awaited()
     assert kept.answer_text == their_words
+
+
+async def test_a_question_only_the_candidate_can_answer_stores_nothing(db) -> None:
+    """A stored row would show on the application page as the answer."""
+    profile, job, application = await _setup(db)
+
+    with _generator("NOT_PROVIDED"), _clean_grounding() as verify:
+        result = await ensure_draft_answer(application, profile, job, QUESTION, db)
+
+    assert result is None
+    verify.assert_not_awaited()  # nothing to check, nothing paid for
+    rows = (
+        await db.execute(select(DraftAnswer).where(DraftAnswer.application_id == application.id))
+    ).scalars().all()
+    assert rows == []
+
+
+async def test_a_stale_machine_answer_is_removed_once_the_question_is_handed_back(db) -> None:
+    """Seen live: rows written under an older prompt kept showing on the page
+    as the answer long after current rules stopped producing anything."""
+    profile, job, application = await _setup(db)
+    with _generator("My current CTC is not specified in the information provided."), (
+        _clean_grounding()
+    ):
+        stale = await ensure_draft_answer(application, profile, job, QUESTION, db)
+
+    with patch(
+        "app.services.tailoring.draft_answer.GENERATION_VERSION", BUMPED_VERSION
+    ), _generator("NOT_PROVIDED"), _clean_grounding():
+        result = await ensure_draft_answer(application, profile, job, QUESTION, db)
+
+    assert result is None
+    assert await db.get(DraftAnswer, stale.id) is None
+
+
+async def test_the_candidates_own_answer_is_kept_even_for_a_handed_back_question(
+    db, client
+) -> None:
+    profile, job, application = await _setup(db)
+    with _generator("generated text"), _clean_grounding():
+        answer = await ensure_draft_answer(application, profile, job, QUESTION, db)
+    with patch(
+        "app.api.v1.routers.applications.verify_grounding",
+        new=AsyncMock(return_value=type("R", (), {"unverified_claims": []})()),
+    ):
+        await client.patch(
+            f"/api/v1/applications/{application.id}/draft-answers/{answer.id}",
+            json={"answer_text": "18 LPA, negotiable."},
+        )
+
+    with patch(
+        "app.services.tailoring.draft_answer.GENERATION_VERSION", BUMPED_VERSION
+    ), _generator("NOT_PROVIDED") as gen, _clean_grounding():
+        kept = await ensure_draft_answer(application, profile, job, QUESTION, db)
+
+    gen.assert_not_awaited()
+    assert kept.answer_text == "18 LPA, negotiable."
+
+
+async def test_a_declined_dropdown_removes_its_stale_machine_pick(db) -> None:
+    """The same gap on the dropdown path. Seen live on a real application:
+    "Do you have any offer in hand? No" still listed as the answer after
+    current rules had started leaving the question for the candidate."""
+    from app.services.tailoring.draft_answer import ensure_draft_option
+
+    profile, job, application = await _setup(db)
+    question, options = "Do you have any offer in hand ?", ["Yes", "No"]
+    with patch(
+        "app.services.tailoring.draft_answer.choose_draft_option", new=AsyncMock(return_value="No")
+    ):
+        await ensure_draft_option(application, profile, job, question, options, db)
+
+    with patch(
+        "app.services.tailoring.draft_answer.GENERATION_VERSION", BUMPED_VERSION
+    ), patch(
+        "app.services.tailoring.draft_answer.choose_draft_option", new=AsyncMock(return_value=None)
+    ):
+        choice = await ensure_draft_option(application, profile, job, question, options, db)
+
+    assert choice is None
+    rows = (
+        await db.execute(select(DraftAnswer).where(DraftAnswer.application_id == application.id))
+    ).scalars().all()
+    assert rows == []

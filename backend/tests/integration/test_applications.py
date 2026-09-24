@@ -587,3 +587,24 @@ async def test_fill_form_endpoint_404s_for_unknown_application(client) -> None:
     response = await client.post("/api/v1/applications/999999/fill-form")
 
     assert response.status_code == 404
+
+
+async def test_generating_an_answer_only_the_candidate_can_give_returns_null(db, client) -> None:
+    """Not an error: the honest result of asking for an expected CTC the
+    profile leaves blank is "that's yours to answer", and the page says so."""
+    profile, job = await _make_profile_and_job(db)
+    application = await get_or_create_application(profile, job, db)
+
+    with patch(
+        "app.services.tailoring.draft_answer.generate_draft_answer",
+        new=AsyncMock(return_value="NOT_PROVIDED"),
+    ):
+        response = await client.post(
+            f"/api/v1/applications/{application.id}/draft-answers",
+            json={"question_text": "What is your expected CTC?"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() is None
+    listed = await client.get(f"/api/v1/applications/{application.id}/draft-answers")
+    assert listed.json() == []

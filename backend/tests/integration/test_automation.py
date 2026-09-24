@@ -366,3 +366,26 @@ async def test_the_fields_limit_reaches_the_generator(db) -> None:
 
     assert answer == "Fits."
     assert mock_generate.await_args.args[3] == 255
+
+
+async def test_a_question_only_the_candidate_can_answer_reaches_the_adapter_as_none(db) -> None:
+    profile, job = await _make_profile_and_job(db)
+    application = await get_or_create_application(profile, job, db)
+
+    captured = {}
+
+    async def capture_and_fill(self, application_url, payload):
+        captured["answer_question"] = payload["answer_question"]
+        return fake_result("filled")
+
+    with (
+        patch("app.services.automation.GreenhouseFormAdapter.fill", new=capture_and_fill),
+        patch(
+            "app.services.tailoring.draft_answer.generate_draft_answer",
+            new=AsyncMock(return_value="NOT_PROVIDED"),
+        ),
+    ):
+        await fill_application_form(application, profile, job, db)
+        answer = await captured["answer_question"]("What is your expected CTC?", None)
+
+    assert answer is None

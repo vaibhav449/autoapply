@@ -9,6 +9,7 @@ from app.services.tailoring.draft_answer import (
     GENERATION_SYSTEM_PROMPT,
     choose_draft_option,
     generate_draft_answer,
+    leaves_it_to_the_candidate,
     structured_profile_block,
 )
 
@@ -368,3 +369,55 @@ async def test_an_answer_that_will_not_fit_comes_back_whole_never_cut() -> None:
 
     assert content == still_long
     assert mock_create.await_count == 2  # one rewrite, not a loop
+
+
+def test_the_prompt_hands_back_only_what_the_candidate_alone_can_supply() -> None:
+    """The contract, and its limit. Measured on a real profile: without the
+    second half, a terse "Exp working with AWS?" came back NOT_PROVIDED on every
+    run — "exp" read toward "Expected CTC: not provided" — and a question the
+    resume does answer was left blank.
+    """
+    assert "reply with exactly NOT_PROVIDED" in GENERATION_SYSTEM_PROMPT.replace("Reply", "reply")
+    assert "is never answered with NOT_PROVIDED" in GENERATION_SYSTEM_PROMPT
+    assert '"exp" is short for experience' in GENERATION_SYSTEM_PROMPT
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "NOT_PROVIDED",
+        "Sorry — NOT_PROVIDED.",  # the marker wrapped in words still never reaches a form
+        # seen in the eval: the block's own wording, echoed as the whole answer
+        "not provided",
+        "Not provided.",
+        "Current CTC is not provided.",
+        "Expected CTC: not provided",
+        "Preferred work locations: not provided.",
+        "My expected CTC is not provided.",
+    ],
+)
+def test_a_reply_that_only_states_an_absence_is_handed_back(reply: str) -> None:
+    assert leaves_it_to_the_candidate(reply) is True
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "I do not have experience working with AWS.",
+        "Raichur, Karnataka, India",
+        "The exact duration of my experience with Python is not specified in my resume.",
+        "Sponsorship is not provided by my current employer, so I would need it.",
+    ],
+)
+def test_a_reply_with_something_to_say_is_kept(reply: str) -> None:
+    assert leaves_it_to_the_candidate(reply) is False
+
+
+async def test_the_marker_is_never_shortened_to_fit_a_tiny_field() -> None:
+    with patch(CREATE, new=mock_completion("NOT_PROVIDED")) as mock_create:
+        content = await generate_draft_answer(
+            make_profile(), make_job(), "Expected CTC?", max_length=5
+        )
+
+    assert content == "NOT_PROVIDED"
+    mock_create.assert_awaited_once()

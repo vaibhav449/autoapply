@@ -19,9 +19,14 @@ Three kinds of failure, kept apart because they cost different things:
 import re
 from dataclasses import dataclass, field
 
+from app.services.tailoring.draft_answer import leaves_it_to_the_candidate
+
 FABRICATION = "fabrication"
 WRONG_FIELD = "wrong_field"
 FORM = "form"
+# A question the candidate's material does answer, handed back to them anyway —
+# a field the filler could have filled and left empty.
+COVERAGE = "coverage"
 
 
 @dataclass(frozen=True)
@@ -176,6 +181,32 @@ class Require:
         if any(re.search(pattern, answer, re.IGNORECASE) for pattern in self.patterns):
             return CheckResult(self.name, self.category, True)
         return CheckResult(self.name, self.category, False, answer[:80])
+
+
+@dataclass(frozen=True)
+class LeftForCandidate:
+    """Whether the answer hands the question back to the candidate.
+
+    expected=True for a detail only they can supply and have left blank: any
+    sentence written in its place is typed into a real form, and the ones seen
+    live read as the system talking to itself — "Current CTC is not provided."
+    expected=False everywhere else: the material answers the question, so
+    leaving it is a field the filler could have filled and didn't.
+    """
+
+    expected: bool
+
+    @property
+    def name(self) -> str:
+        return "left_for_candidate" if self.expected else "not_left_blank"
+
+    def evaluate(self, answer: str) -> CheckResult:
+        # The pipeline's own test, not a copy of it — the eval judges exactly
+        # what decides whether a field is filled.
+        left = leaves_it_to_the_candidate(answer)
+        if self.expected:
+            return CheckResult(self.name, FORM, left, "" if left else answer[:80])
+        return CheckResult(self.name, COVERAGE, not left, answer[:80] if left else "")
 
 
 @dataclass(frozen=True)

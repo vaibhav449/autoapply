@@ -207,3 +207,22 @@ def test_markdown_is_caught_and_a_bare_url_is_not() -> None:
 
     assert NO_MARKDOWN.evaluate(seen_live).passed is False
     assert NO_MARKDOWN.evaluate("https://linkedin.com/in/example").passed is True
+
+
+def test_left_for_candidate_judges_both_directions() -> None:
+    """Uses the pipeline's own detector, so the eval scores exactly what
+    decides whether a field gets filled."""
+    from evals.checks import COVERAGE, LeftForCandidate
+
+    should_leave = LeftForCandidate(expected=True)
+    assert should_leave.evaluate("NOT_PROVIDED").passed is True
+    assert should_leave.evaluate("not provided").passed is True  # echoed wording
+    placeholder = should_leave.evaluate("I do not have information regarding visa sponsorship.")
+    assert placeholder.passed is False
+    assert placeholder.category == FORM
+
+    should_answer = LeftForCandidate(expected=False)
+    assert should_answer.evaluate("I do not have experience working with AWS.").passed is True
+    left_blank = should_answer.evaluate("NOT_PROVIDED")
+    assert left_blank.passed is False
+    assert left_blank.category == COVERAGE

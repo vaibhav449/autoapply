@@ -7,7 +7,7 @@ import {
 import { DraftAnswerCard } from "@/components/draft-answer-card";
 import { FillFormPanel } from "@/components/fill-form-panel";
 import { SubmitButton } from "@/components/submit-button";
-import { ArrowLeftIcon, ExternalLinkIcon } from "@/components/icons";
+import { AlertTriangleIcon, ArrowLeftIcon, ExternalLinkIcon } from "@/components/icons";
 import {
   APPLICATION_STATE_LABELS,
   OUTCOME_KIND_LABELS,
@@ -23,10 +23,15 @@ import {
 
 export default async function ApplicationDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ yours?: string }>;
 }) {
   const { id } = await params;
+  // Set by createDraftAnswer when the question turned out to be the
+  // candidate's to answer — see the notice above the question form.
+  const { yours: leftForCandidate } = await searchParams;
   const applicationId = Number(id);
 
   const application = await apiGet<ApplicationOut>(`/api/v1/applications/${id}`);
@@ -175,6 +180,21 @@ export default async function ApplicationDetailPage({
         </p>
 
         <section className="card">
+          {leftForCandidate && (
+            <div className="alert alert-info">
+              <AlertTriangleIcon className="alert-icon" width={18} height={18} />
+              <div className="alert-body">
+                <strong>Only you can answer this one</strong>
+                <p>
+                  &ldquo;{leftForCandidate}&rdquo; asks for something your profile doesn&apos;t
+                  say yet, so no answer was drafted — a sentence about the gap is not something an
+                  employer can use. <Link href={`/profiles/${profile.id}`}>Add it to your profile</Link>{" "}
+                  and every application can use it; until then the form filler leaves that field
+                  for you.
+                </p>
+              </div>
+            </div>
+          )}
           <form action={createAnswerWithId}>
             <div className="field">
               <label htmlFor="question_text">Application question</label>

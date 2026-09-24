@@ -143,13 +143,15 @@ async def fill_application_form(
 
     first_name, _, last_name = profile.name.partition(" ")
 
-    async def answer_question(question_text: str, max_length: int | None) -> str:
+    async def answer_question(question_text: str, max_length: int | None) -> str | None:
         # The adapter passes the field's limit and refuses to write anything
         # longer; this side's job is to make an answer that does not need refusing.
         draft = await ensure_draft_answer(
             application, profile, job, question_text, db, max_length=max_length
         )
-        return draft.answer_text
+        # None: only the candidate can answer this and their profile leaves it
+        # blank — left for them, exactly as a declined dropdown is.
+        return draft.answer_text if draft is not None else None
 
     async def choose_option(question_text: str, options: list[str]) -> str | None:
         return await ensure_draft_option(application, profile, job, question_text, options, db)

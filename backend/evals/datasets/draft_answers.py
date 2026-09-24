@@ -33,6 +33,9 @@ class Case:
     why: str
     # The form field's own limit, for the questions that arrive with one.
     max_length: int | None = None
+    # A detail only the candidate can supply, left blank on the fixture: the
+    # right answer is to hand the question back to them, not to write anything.
+    left_for_candidate: bool = False
 
 
 CANDIDATE = {
@@ -200,6 +203,7 @@ CASES = (
     ),
     Case(
         id="preferred-location-unsupplied",
+        left_for_candidate=True,
         question="What is your preferred work location?",
         checks=(
             Forbid((r"\bJaipur\b",), WRONG_FIELD),
@@ -221,6 +225,7 @@ CASES = (
     ),
     Case(
         id="expected-ctc-unsupplied",
+        left_for_candidate=True,
         question="What is your expected CTC (in LPA)?",
         checks=(
             Forbid((_SIX_LPA,), WRONG_FIELD),
@@ -245,6 +250,7 @@ CASES = (
     ),
     Case(
         id="sponsorship-unsupplied",
+        left_for_candidate=True,
         question=(
             "Will you now or in the future require visa sponsorship to work in the "
             "United States?"
@@ -263,6 +269,7 @@ CASES = (
     ),
     Case(
         id="github-unsupplied",
+        left_for_candidate=True,
         question="GitHub profile URL",
         checks=(
             Forbid((r"github\.com",), FABRICATION),
