@@ -100,7 +100,11 @@ GENERATION_SYSTEM_PROMPT = (
 # "6": a detail only the candidate can supply, left blank, is answered with
 # NOT_PROVIDED instead of a sentence about the gap — "Current CTC is not
 # provided." typed into a real form. Rows written under "5" can be exactly that.
-GENERATION_VERSION = "6"
+#
+# "7": the dropdown prompt now says an ongoing internship means the candidate is
+# working. Under "6", a real notice-period dropdown was answered "Currently not
+# working" for a candidate interning right now — a pick that must not be reused.
+GENERATION_VERSION = "7"
 
 # The generator's reply when a question asks for something only the candidate
 # can supply and they have not (see GENERATION_SYSTEM_PROMPT). The question is
@@ -124,6 +128,59 @@ def leaves_it_to_the_candidate(answer: str) -> bool:
     never be typed into a form — or a reply that only states the absence.
     """
     return NOT_PROVIDED in answer or _ONLY_AN_ABSENCE.fullmatch(answer.strip()) is not None
+
+
+# How each detail only the candidate supplies tends to be asked for. Used for
+# one thing: checking a hand-back against the profile. Prompt wording alone did
+# not hold the line — on a real profile "Exp working with AWS?" was handed back
+# every run, first because "exp" read as "expected", then again once every
+# detail was filled in and no line said "not provided" at all.
+_SALARY = r"\b(?:ctc|cctc|ectc|salar\w*|compensation|pay|package|stipend|lpa|remuneration)\b"
+_DETAIL_WORDING = {
+    "location": r"\b(?:current|present)\s+(?:location|city)\b|\bwhere (?:are|do) you (?:based|live)",
+    # pref+er+ — a real form asks for the "Preffered Location".
+    "preferred_locations": (
+        r"\bpref+er+\w*\b[^?]{0,20}\blocation|\brelocat|\bwilling to (?:work|move)"
+        r"|\bopen to (?:work|mov|relocat)"
+    ),
+    "notice_period": r"\bnotice\b|\blwd\b|\bjoin(?:ing)?\b|\bstart date\b|\bavailab",
+    "work_authorization": (
+        r"\bsponsor|\bvisa\b|\bwork authori[sz]|\bauthori[sz]ed to work|\bright to work"
+        r"|\bwork permit|\bcitizen"
+    ),
+    "has_offer_in_hand": r"\boffers?\b",
+    "linkedin_url": r"\blinkedin\b",
+    "portfolio_url": r"\bgithub\b|\bportfolio\b|\bwebsite\b|\bpersonal site\b",
+}
+
+
+def asks_for_a_blank_detail(question_text: str, profile: Profile) -> bool:
+    """Whether a hand-back could be right: the question asks about a detail
+    only the candidate supplies, and that detail is blank on their profile.
+
+    The prompt's own condition, checked in code. A hand-back that fails it is a
+    question the candidate's material does answer, left blank for nothing.
+    """
+    if re.search(_SALARY, question_text, re.IGNORECASE):
+        if re.search(r"\bexpect|\bectc\b|\bdesired\b", question_text, re.IGNORECASE):
+            return not profile.expected_ctc
+        if re.search(r"\bcurrent\b|\bcctc\b|\bpresent\b", question_text, re.IGNORECASE):
+            return not profile.current_ctc
+        return not profile.current_ctc or not profile.expected_ctc
+
+    blank = {
+        "location": not profile.location,
+        "preferred_locations": not profile.preferred_locations,
+        "notice_period": not profile.notice_period,
+        "work_authorization": not profile.work_authorization,
+        "has_offer_in_hand": profile.has_offer_in_hand is None,
+        "linkedin_url": not profile.linkedin_url,
+        "portfolio_url": not profile.portfolio_url,
+    }
+    return any(
+        blank[detail] and re.search(pattern, question_text, re.IGNORECASE)
+        for detail, pattern in _DETAIL_WORDING.items()
+    )
 
 
 def answer_fingerprint(profile: Profile, job: JobModel) -> str:
@@ -205,8 +262,10 @@ CHOICE_SYSTEM_PROMPT = (
     "same fact from resume prose. Never invent experience the candidate does not "
     "have. An ongoing role dated through the present (e.g. an internship marked "
     "'... - Present') is real, current experience — do not treat the candidate "
-    "as having none. Where the options are experience ranges, pick the range "
-    "that contains the candidate's actual years of experience."
+    "as having none. It also means they are working now: never pick an option "
+    "saying the candidate is not currently working, however soon they could "
+    "start. Where the options are experience ranges, pick the range that "
+    "contains the candidate's actual years of experience."
 )
 
 
@@ -361,6 +420,26 @@ async def generate_draft_answer(
         },
     ]
     content = await _complete(messages)
+
+    if leaves_it_to_the_candidate(content) and not asks_for_a_blank_detail(question_text, profile):
+        # Handed back, but nothing the question asks for is blank on the profile.
+        # One correction; if the model still hands it back, that stands — a
+        # field left for the candidate is always the safe way to be wrong.
+        content = await _complete(
+            [
+                *messages,
+                {"role": "assistant", "content": content},
+                {
+                    "role": "user",
+                    "content": (
+                        "Nothing this question asks for is marked not provided, so answer "
+                        "it from the candidate's material instead of with NOT_PROVIDED. "
+                        "If the material does not show something, say so plainly — never "
+                        "invent it."
+                    ),
+                },
+            ]
+        )
 
     too_long = max_length is not None and len(content) > max_length
     if too_long and not leaves_it_to_the_candidate(content):

@@ -421,3 +421,86 @@ async def test_the_marker_is_never_shortened_to_fit_a_tiny_field() -> None:
 
     assert content == "NOT_PROVIDED"
     mock_create.assert_awaited_once()
+
+
+FILLED = {
+    "location": "Raichur, Karnataka, India",
+    "notice_period": "Can join within 30 days, negotiable",
+    "current_ctc": "Internship stipend",
+    "expected_ctc": "Negotiable",
+    "preferred_locations": "Anywhere in India",
+    "work_authorization": "Authorized to work in India",
+    "linkedin_url": "https://linkedin.com/in/x",
+    "portfolio_url": "https://github.com/x",
+    "has_offer_in_hand": False,
+}
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Exp working with AWS?",  # seen live, handed back on every run
+        "How many years of exp do you have with React?",
+        "Why do you want to work here?",
+        "What is your ECTC in LPA ?",  # filled: a hand-back here is wrong
+        "Will you now or in the future require visa sponsorship?",
+    ],
+)
+def test_nothing_is_blank_so_no_hand_back_is_right(question: str) -> None:
+    from app.services.tailoring.draft_answer import asks_for_a_blank_detail
+
+    assert asks_for_a_blank_detail(question, make_profile(**FILLED)) is False
+
+
+@pytest.mark.parametrize(
+    ("question", "blank_field"),
+    [
+        ("What is your ECTC in LPA ?", "expected_ctc"),
+        ("What is your CCTC in LPA ?", "current_ctc"),
+        ("What are your salary expectations?", "expected_ctc"),
+        ("Will you now or in the future require visa sponsorship?", "work_authorization"),
+        ("Preffered Location", "preferred_locations"),
+        ("What is your official Notice Period and LWD ?", "notice_period"),
+        ("Do you have any offer in hand ?", "has_offer_in_hand"),
+        ("GitHub profile URL", "portfolio_url"),
+    ],
+)
+def test_a_hand_back_for_a_blank_detail_stands(question: str, blank_field: str) -> None:
+    from app.services.tailoring.draft_answer import asks_for_a_blank_detail
+
+    profile = make_profile(**{**FILLED, blank_field: None})
+    assert asks_for_a_blank_detail(question, profile) is True
+
+
+async def test_an_unsupported_hand_back_gets_one_correction() -> None:
+    """Seen live: "Exp working with AWS?" came back NOT_PROVIDED on a profile
+    with every detail filled in — a question the resume answers, left blank."""
+    replies = completions_in_order("NOT_PROVIDED", "I do not have experience working with AWS.")
+    with patch(CREATE, new=replies) as mock_create:
+        content = await generate_draft_answer(
+            make_profile(**FILLED), make_job(), "Exp working with AWS?"
+        )
+
+    assert content == "I do not have experience working with AWS."
+    assert mock_create.await_count == 2
+    assert "NOT_PROVIDED" in mock_create.await_args_list[1].kwargs["messages"][-1]["content"]
+
+
+async def test_a_hand_back_that_survives_the_correction_stands() -> None:
+    """Leaving a field for the candidate is always the safe way to be wrong."""
+    with patch(CREATE, new=completions_in_order("NOT_PROVIDED", "NOT_PROVIDED")) as mock_create:
+        content = await generate_draft_answer(
+            make_profile(**FILLED), make_job(), "Exp working with AWS?"
+        )
+
+    assert content == "NOT_PROVIDED"
+    assert mock_create.await_count == 2  # one correction, not a loop
+
+
+async def test_a_justified_hand_back_is_not_second_guessed() -> None:
+    profile = make_profile(**{**FILLED, "expected_ctc": None})
+    with patch(CREATE, new=mock_completion("NOT_PROVIDED")) as mock_create:
+        content = await generate_draft_answer(profile, make_job(), "What is your ECTC in LPA ?")
+
+    assert content == "NOT_PROVIDED"
+    mock_create.assert_awaited_once()
