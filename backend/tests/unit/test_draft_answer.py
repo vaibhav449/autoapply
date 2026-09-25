@@ -504,3 +504,71 @@ async def test_a_justified_hand_back_is_not_second_guessed() -> None:
 
     assert content == "NOT_PROVIDED"
     mock_create.assert_awaited_once()
+
+
+US_SPONSORSHIP = "Will you now or in the future require visa sponsorship to work in the United States?"
+
+
+@pytest.mark.parametrize(
+    ("question", "authorization"),
+    [
+        (US_SPONSORSHIP, "Authorized to work in India"),  # measured: "No" 5 runs of 5
+        (US_SPONSORSHIP, "Indian citizen"),  # measured: "No" 5 runs of 5
+        ("Are you legally authorized to work in the US?", "Authorized to work in India"),
+        ("Do you have the right to work in the UK?", "Authorized to work in India"),
+        ("Will you need a visa to work in Canada or India?", "Authorized to work in India"),
+    ],
+)
+def test_a_country_the_authorization_never_names_is_left_open(
+    question: str, authorization: str
+) -> None:
+    from app.services.tailoring.draft_answer import authorization_leaves_it_open
+
+    profile = make_profile(work_authorization=authorization)
+    assert authorization_leaves_it_open(question, profile) is True
+
+
+@pytest.mark.parametrize(
+    ("question", "authorization"),
+    [
+        ("Are you legally authorized to work in India?", "Authorized to work in India"),
+        (US_SPONSORSHIP, "US citizen"),
+        (
+            US_SPONSORSHIP,
+            "Authorized to work in India; would need visa sponsorship to work in any other country",
+        ),
+        # no country named: the job's own context decides, as before
+        ("Will you require visa sponsorship?", "Authorized to work in India"),
+        # a country, but not an immigration question
+        ("Are you willing to relocate to the United States?", "Authorized to work in India"),
+        # "us" the pronoun is not the country
+        ("Will you require sponsorship to work with us?", "Authorized to work in India"),
+        # nothing on file is handled as a blank detail, not here
+        (US_SPONSORSHIP, None),
+    ],
+)
+def test_otherwise_the_question_is_not_left_open(question: str, authorization: str | None) -> None:
+    from app.services.tailoring.draft_answer import authorization_leaves_it_open
+
+    profile = make_profile(work_authorization=authorization)
+    assert authorization_leaves_it_open(question, profile) is False
+
+
+async def test_the_dropdown_is_not_even_asked_about_an_unnamed_country() -> None:
+    profile = make_profile(work_authorization="Authorized to work in India")
+    with patch(CREATE, new=mock_completion("No")) as mock_create:
+        choice = await choose_draft_option(profile, make_job(), US_SPONSORSHIP, ["Yes", "No"])
+
+    assert choice is None
+    mock_create.assert_not_awaited()
+
+
+async def test_the_text_answer_hands_it_back_without_asking() -> None:
+    """Not asked at all — the hand-back correction would otherwise push the
+    model toward exactly this inference."""
+    profile = make_profile(work_authorization="Indian citizen")
+    with patch(CREATE, new=mock_completion("No, I do not require sponsorship.")) as mock_create:
+        content = await generate_draft_answer(profile, make_job(), US_SPONSORSHIP)
+
+    assert content == "NOT_PROVIDED"
+    mock_create.assert_not_awaited()
