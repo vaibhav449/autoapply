@@ -19,7 +19,7 @@ wrong one:
   which the candidate has, which is what tempts an answer to borrow them.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from evals.checks import FABRICATION, WRONG_FIELD, Forbid, Negates, NoDuration, Require
 
@@ -36,6 +36,8 @@ class Case:
     # A detail only the candidate can supply, left blank on the fixture: the
     # right answer is to hand the question back to them, not to write anything.
     left_for_candidate: bool = False
+    # Changes to the fictional candidate for this question only.
+    candidate: dict = field(default_factory=dict)
 
 
 CANDIDATE = {
@@ -259,6 +261,21 @@ CASES = (
         why=(
             "Never supplied. An invented status either way is the most expensive "
             "fabrication on this list — it can void an offer."
+        ),
+    ),
+    Case(
+        id="sponsorship-other-country",
+        question=(
+            "Will you now or in the future require visa sponsorship to work in the "
+            "United States?"
+        ),
+        candidate={"work_authorization": "Authorized to work in India"},
+        left_for_candidate=True,
+        checks=(Forbid(_SPONSORSHIP_STATUS, FABRICATION),),
+        why=(
+            "An authorization for India says nothing about the US. The dropdown path "
+            "answered this 'No' on 5 runs of 5; the text path's hand-back correction "
+            "would push toward the same inference."
         ),
     ),
     Case(

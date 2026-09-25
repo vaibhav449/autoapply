@@ -226,3 +226,27 @@ def test_left_for_candidate_judges_both_directions() -> None:
     left_blank = should_answer.evaluate("NOT_PROVIDED")
     assert left_blank.passed is False
     assert left_blank.category == COVERAGE
+
+
+def test_the_dropdown_judge_separates_false_statements_from_off_contract_picks() -> None:
+    from evals.datasets.dropdowns import CASES
+    from evals.dropdowns import FALSE, OFF, OK, judge
+
+    by_id = {case.id: case for case in CASES}
+    india_only = by_id["us-sponsorship-india-only"]
+    assert judge(india_only, None) == OK  # left for the candidate
+    assert judge(india_only, "No") == FALSE  # the invented status, seen live
+    assert judge(india_only, "Yes") == OFF  # a guess the details do not support either
+
+    notice = by_id["notice-vague"]
+    assert judge(notice, "Currently not working") == FALSE  # seen live, for an intern
+    assert judge(notice, "≤30 Days - Negotiable") == OK
+
+
+def test_every_dropdown_label_is_one_of_the_questions_own_options() -> None:
+    """A label naming an option the form never offers can never be picked,
+    so it would silently test nothing."""
+    from evals.datasets.dropdowns import CASES
+
+    for case in CASES:
+        assert (case.acceptable | case.false_picks) - {None} <= set(case.options), case.id

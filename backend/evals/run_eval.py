@@ -3,6 +3,7 @@
     cd backend
     python -m evals.run_eval draft_answers --runs 5
     python -m evals.run_eval draft_answers --only python-years --runs 10
+    python -m evals.run_eval dropdowns --runs 5
 
 Exits non-zero when any answer breaks a rule, so it can gate a prompt change:
 run it before and after, and the difference is what the change did.
@@ -11,9 +12,9 @@ run it before and after, and the difference is what the change did.
 import argparse
 import sys
 
-from evals import draft_answers
+from evals import draft_answers, dropdowns
 
-SUITES = {"draft_answers": draft_answers.run}
+SUITES = {"draft_answers": draft_answers.run, "dropdowns": dropdowns.run}
 
 
 def main(argv: list[str] | None = None) -> int:

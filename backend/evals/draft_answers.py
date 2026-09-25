@@ -61,9 +61,10 @@ def _checks_for(case: Case) -> list:
     return checks
 
 
-async def _sample(
-    case: Case, run: int, profile: Profile, job: JobModel, gate: asyncio.Semaphore
-) -> Sample:
+async def _sample(case: Case, run: int, job: JobModel, gate: asyncio.Semaphore) -> Sample:
+    # Never persisted — the generator only reads attributes, so a transient
+    # object is the candidate without a database anywhere near the eval.
+    profile = Profile(**{**CANDIDATE, **case.candidate}, projects=[])
     async with gate:
         answer = await generate_draft_answer(profile, job, case.question, case.max_length)
         # Handed back to the candidate, the pipeline stores nothing and checks
@@ -140,9 +141,6 @@ def report(samples: list[Sample], runs: int, cases: list[Case]) -> str:
 async def collect(
     runs: int, concurrency: int, only: list[str] | None
 ) -> tuple[list[Sample], list[Case]]:
-    # Never persisted — the generator only reads attributes, so a transient
-    # object is the candidate without a database anywhere near the eval.
-    profile = Profile(**CANDIDATE, projects=[])
     job = JobModel(**JOB)
     cases = [case for case in CASES if not only or case.id in only]
     if only and len(cases) != len(set(only)):
@@ -151,7 +149,7 @@ async def collect(
 
     gate = asyncio.Semaphore(concurrency)
     samples = await asyncio.gather(
-        *(_sample(case, i, profile, job, gate) for case in cases for i in range(runs))
+        *(_sample(case, i, job, gate) for case in cases for i in range(runs))
     )
     return list(samples), cases
 

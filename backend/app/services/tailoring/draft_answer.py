@@ -104,7 +104,11 @@ GENERATION_SYSTEM_PROMPT = (
 # "7": the dropdown prompt now says an ongoing internship means the candidate is
 # working. Under "6", a real notice-period dropdown was answered "Currently not
 # working" for a candidate interning right now — a pick that must not be reused.
-GENERATION_VERSION = "7"
+#
+# "8": an immigration question about a country the candidate's authorization
+# does not name is left for them (authorization_leaves_it_open). Under "7" a
+# one-country authorization answered a US sponsorship question "No" every time.
+GENERATION_VERSION = "8"
 
 # The generator's reply when a question asks for something only the candidate
 # can supply and they have not (see GENERATION_SYSTEM_PROMPT). The question is
@@ -152,6 +156,59 @@ _DETAIL_WORDING = {
     "linkedin_url": r"\blinkedin\b",
     "portfolio_url": r"\bgithub\b|\bportfolio\b|\bwebsite\b|\bpersonal site\b",
 }
+
+
+# Countries as immigration questions name them. Each maps to case-insensitive
+# names and, where the short form collides with ordinary words ("us"), a
+# case-sensitive abbreviation.
+_COUNTRIES = {
+    "united states": (r"\bunited states\b|\bamerica\b", r"\bU\.?S\.?A?\b"),
+    "united kingdom": (r"\bunited kingdom\b|\bbritain\b|\bengland\b", r"\bU\.?K\.?\b"),
+    "european union": (r"\beuropean union\b|\beurope\b", r"\bEU\b"),
+    "united arab emirates": (r"\bunited arab emirates\b|\bdubai\b", r"\bUAE\b"),
+    "canada": (r"\bcanad", None),
+    "australia": (r"\baustralia", None),
+    "new zealand": (r"\bnew zealand", None),
+    "germany": (r"\bgerman", None),
+    "ireland": (r"\bireland\b|\birish\b", None),
+    "netherlands": (r"\bnetherlands\b|\bholland\b|\bdutch\b", None),
+    "singapore": (r"\bsingapore", None),
+    "india": (r"\bindia", None),
+}
+# An authorization that speaks beyond the countries it names.
+_EVERY_COUNTRY = r"\b(?:any|all|every)\s+(?:other\s+)?countr|\bother countries\b|\bworldwide\b"
+
+
+def _countries_in(text: str) -> set[str]:
+    found = set()
+    for country, (names, abbreviation) in _COUNTRIES.items():
+        if re.search(names, text, re.IGNORECASE) or (
+            abbreviation and re.search(abbreviation, text)
+        ):
+            found.add(country)
+    return found
+
+
+def authorization_leaves_it_open(question_text: str, profile: Profile) -> bool:
+    """An immigration question about a country the candidate's authorization
+    says nothing about — which only the candidate can answer.
+
+    Checked in code, and before the model is asked at all. Measured by the
+    dropdown eval: "Authorized to work in India" and "Indian citizen" each
+    answered "Will you require visa sponsorship to work in the United States?"
+    with "No" on 5 runs of 5 — an invented immigration status, despite a
+    prompt rule forbidding exactly that inference. An authorization for one
+    country says nothing about another, however obvious the answer looks.
+    """
+    authorization = profile.work_authorization
+    if not authorization or not re.search(
+        _DETAIL_WORDING["work_authorization"], question_text, re.IGNORECASE
+    ):
+        return False
+    asked = _countries_in(question_text)
+    if not asked or re.search(_EVERY_COUNTRY, authorization, re.IGNORECASE):
+        return False
+    return not asked <= _countries_in(authorization)
 
 
 def asks_for_a_blank_detail(question_text: str, profile: Profile) -> bool:
@@ -278,6 +335,9 @@ async def choose_draft_option(
     against the list the live form actually offered, so a hallucinated value
     cannot reach the form at all — the worst case is an honest skip.
     """
+    if authorization_leaves_it_open(question_text, profile):
+        return None
+
     numbered = "\n".join(f"- {option}" for option in options)
     completion = await openai_client.chat.completions.create(
         model="gpt-4o-mini",
@@ -406,6 +466,11 @@ async def generate_draft_answer(
     what still will not fit after that is left for the human, never cut to size
     here. Either way verify_grounding checks the final text like any other.
     """
+    if authorization_leaves_it_open(question_text, profile):
+        # Not asked at all: the one-correction hand-back check below would
+        # otherwise push the model toward exactly the inference this prevents.
+        return NOT_PROVIDED
+
     messages = [
         {"role": "system", "content": GENERATION_SYSTEM_PROMPT},
         {

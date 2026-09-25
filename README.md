@@ -54,8 +54,12 @@ python -m evals.run_eval draft_answers --runs 5 --out before.json
 python -m evals.run_eval draft_answers --runs 5 --out after.json
 ```
 
-It calls the real model, so it needs `OPENAI_API_KEY` and costs a few cents a
-run — it is run by hand around prompt changes, not in CI. Each question is asked
+`python -m evals.run_eval dropdowns` does the same for the option picker, which
+cannot invent prose but can still pick a false option — it once answered a US
+sponsorship question "No" for a candidate authorized only in India.
+
+Both call the real model, so they need `OPENAI_API_KEY` and cost a few cents a
+run — they are run by hand around prompt changes, not in CI. Each question is asked
 several times because temperature 0 is not deterministic in practice: a failure
 that shows up on half the runs looks clean on a single pass. `--rescore FILE`
 re-judges saved answers under the current rules without calling the model, which
