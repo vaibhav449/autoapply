@@ -338,3 +338,25 @@ async def test_a_declined_dropdown_removes_its_stale_machine_pick(db) -> None:
         await db.execute(select(DraftAnswer).where(DraftAnswer.application_id == application.id))
     ).scalars().all()
     assert rows == []
+
+
+async def test_correcting_a_supplied_detail_regenerates_the_answer_built_from_it(db) -> None:
+    """The details the candidate supplies are as much the answer's source as the
+    resume. Before they were part of the cache key, correcting one did nothing:
+    the answer drafted from the old value kept being typed into forms."""
+    profile, job, application = await _setup(db)
+    profile.preferred_locations = "Open to relocating anywhere in India"
+    await db.commit()
+    question = "Preferred work location?"
+
+    with _generator("Open to relocating anywhere in India."), _clean_grounding():
+        first = await ensure_draft_answer(application, profile, job, question, db)
+
+    profile.preferred_locations = "Bengaluru only"
+    await db.commit()
+    with _generator("Bengaluru.") as gen, _clean_grounding():
+        corrected = await ensure_draft_answer(application, profile, job, question, db)
+
+    gen.assert_awaited_once()
+    assert corrected.id == first.id
+    assert corrected.answer_text == "Bengaluru."

@@ -132,6 +132,12 @@ def answer_fingerprint(profile: Profile, job: JobModel) -> str:
     The question is already the cache key, so what is left is the prompt logic
     and the material it was grounded in — edit the resume and the old answer is
     describing a person who no longer exists on paper.
+
+    That material includes the details the candidate supplies directly, not
+    just the resume. Leaving them out meant correcting one did nothing: an
+    answer drafted from "Preferred work locations: open to relocating" kept
+    being typed after the candidate changed it to one city, because nothing
+    the key looked at had moved.
     """
     payload = "\0".join(
         [
@@ -140,6 +146,7 @@ def answer_fingerprint(profile: Profile, job: JobModel) -> str:
             # they go stale when that check changes even though the answer does not.
             VERIFICATION_VERSION,
             profile.full_resume_text,
+            structured_profile_block(profile),
             job.description or "",
         ]
     )
